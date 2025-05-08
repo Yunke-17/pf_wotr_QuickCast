@@ -1,0 +1,10 @@
+{
+  "Id": "QuickCast",
+  "DisplayName": "Quick Cast System",
+  "Author": "ToisnaLey",
+  "Version": "0.1.0",
+  "EntryMethod": "QuickCast.Main.Load",
+  "HomePage": "",
+  "Requirements": [],
+  "ManagerVersion": "0.27.0"
+} 

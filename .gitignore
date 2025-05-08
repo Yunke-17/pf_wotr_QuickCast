@@ -1,0 +1,17 @@
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build artifacts
+**/bin/
+**/obj/
+
+# Unity Mod Manager logs (if they are in the project directory and you don't want to track them)
+# log.txt 
+# Logs/
+
+# Rider
+.idea/ 

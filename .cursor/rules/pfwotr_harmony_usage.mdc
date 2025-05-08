@@ -1,0 +1,75 @@
+---
+description: 在编写或调试任何Harmony Patch时。
+globs: 
+alwaysApply: false
+---
+# 《开拓者：正义之怒》中 HarmonyLib 的使用
+
+本规则提供了在为《开拓者：正义之怒》(PFWoTR) 开发 Mod 时使用 HarmonyLib (通常简称为 Harmony) 的核心指南和最佳实践。Harmony 是进行运行时代码修改（Patching）不可或缺的工具。
+
+## 1. HarmonyLib 基础
+
+*   **目的**: Harmony 允许 Modder 在运行时修改（注入、替换、添加代码到）已编译的游戏方法，而无需直接修改游戏文件。
+*   **核心概念**: 
+    *   **Patch**: 对目标方法进行的修改。
+    *   **Target Method**: 原始游戏中你希望修改的方法。
+    *   **Patch Types**: 
+        *   **Prefix**: 在目标方法执行*之前*运行的代码。可以修改参数，跳过原方法执行，或改变返回值（如果原方法被跳过）。
+        *   **Postfix**: 在目标方法执行*之后*运行的代码。可以访问/修改原方法的返回值，访问实例 (`__instance`) 和参数。
+        *   **Transpiler**: 最强大的类型，允许直接修改目标方法的CIL (Common Intermediate Language) 指令。用于更复杂的逻辑修改，如添加、删除或替换代码块。
+        *   **Finalizer**: 用于处理目标方法或其 Patch 中抛出的异常。无论是否发生异常都会执行。
+*   **Harmony Instance**: Mod 需要创建一个 Harmony 实例，通常使用 Mod 的唯一ID (如 `new HarmonyLib.Harmony("com.example.mymodid")`)。
+
+## 2. 创建 Patch 类
+
+*   **组织**: 通常为每个需要 Patch 的游戏类或相关功能集创建一个单独的 Patch 类。
+*   **注解 (Attributes)**: Harmony 使用注解来声明 Patch：
+    *   `[HarmonyPatch(typeof(TargetType), "TargetMethodName", new Type[] { typeof(Arg1Type), typeof(Arg2Type) }, new ArgumentType[] { ArgumentType.Normal, ArgumentType.Ref })]`:
+        *   `typeof(TargetType)`: 目标方法所在的类。
+        *   `"TargetMethodName"`: 目标方法的名称 (字符串)。
+        *   `new Type[] { ... }` (可选): 如果方法重载，用于指定参数类型列表以区分。
+        *   `new ArgumentType[] { ... }` (可选): 指定参数是普通类型、`ref`还是`out`。
+    *   `[HarmonyPrefix]`, `[HarmonyPostfix]`, `[HarmonyTranspiler]`, `[HarmonyFinalizer]`: 标记 Patch 方法的类型。
+
+## 3. Patch 方法签名
+
+*   Patch 方法必须是 `static`。
+*   **参数传递**: 
+    *   可以通过与目标方法参数同名来接收原始参数的值 (例如 `int parameterName`)。
+    *   使用 `ref` 关键字可以修改原始参数的值 (例如 `ref int parameterName`)。
+    *   `__instance`: 在非静态目标方法中，用于访问该方法所属的实例对象。
+    *   `__result`: 在 Postfix 中，用于访问 (或通过 `ref` 修改) 目标方法的返回值。
+    *   `__state`: 用于在 Prefix 和 Postfix 之间传递自定义数据。
+    *   `__originalMethod`: 一个 `MethodBase` 对象，代表原始的被 Patch 的方法，有时用于动态调用或获取信息。
+*   **Prefix 返回值**: 
+    *   `bool`: 返回 `false` 可以阻止原始方法和后续其他 Prefix 的执行。返回 `true` (或 `void`) 则继续执行。
+
+## 4. 应用 Patches
+
+*   **自动应用**: `harmony.PatchAll(Assembly.GetExecutingAssembly());` 会自动查找当前 Mod 程序集中所有带 `[HarmonyPatch]` 注解的类并应用它们。
+*   **手动应用**: `harmony.Patch(originalMethodInfo, prefixPatch, postfixPatch, transpilerPatch, finalizerPatch);` 允许更精细的控制。
+
+## 5. 编写 Transpiler
+
+*   **复杂度高**: Transpiler 直接操作CIL指令，需要对IL有深入理解。
+*   **用途**: 当 Prefix/Postfix 无法满足需求时，例如：
+    *   在方法中间插入代码。
+    *   移除或替换特定的原始指令。
+    *   修改局部变量的加载/存储。
+*   **签名**: `static IEnumerable<CodeInstruction> MyTranspiler(IEnumerable<CodeInstruction> instructions, ILGenerator generator)`
+*   **核心逻辑**: 遍历 `instructions` 集合，根据需要返回修改后的 `CodeInstruction` 序列。
+
+## 6. 最佳实践与注意事项
+
+*   **明确目标**: 在 Patch 前，使用反编译工具彻底理解目标方法的逻辑和上下文。
+*   **最小化修改**: 尽可能进行小范围、精确的 Patch，以减少与其他 Mod 的冲突和因游戏更新导致 Patch 失效的风险。
+*   **错误处理**: 在 Patch 中添加适当的日志和错误处理，UMM 会捕获并显示它们。
+*   **兼容性**: 
+    *   警惕游戏更新可能导致目标方法签名改变或逻辑重构，从而使 Patch 失效。使用 `[HarmonyPrepare]` 可以进行条件性 Patching。
+    *   如果多个 Mod Patch 同一个方法，执行顺序可能很重要。可以使用 `[HarmonyPriority(int value)]` 来影响顺序。
+*   **Transpiler 风险**: Transpiler 非常强大但也容易出错，且对游戏更新更敏感。优先考虑 Prefix/Postfix，仅在必要时使用 Transpiler。
+*   **Unpatching**: 使用 `harmony.UnpatchAll("com.example.mymodid");` 或更具体的 `Unpatch` 方法可以在 Mod 卸载或禁用时移除 Patches。
+*   **日志记录**: 在 Patch 方法内部使用 `UMM.Logger.Log("message");` 或 `System.Console.WriteLine("message");` (输出到 UMM 日志) 来帮助调试。
+
+遵循这些指南将有助于你更有效地使用 HarmonyLib 来增强《开拓者：正义之怒》的游戏体验。
+
