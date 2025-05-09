@@ -101,8 +101,11 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ActionBarManager.cs" />
     <Compile Include="Main.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="QuickCastMechanicActionBarSlotSpell.cs" />
+    <Compile Include="QuickCastPatches.cs" />
   </ItemGroup>
   <Target Name="PostBuildCopyFiles" AfterTargets="PostBuildEvent">
     <PropertyGroup>

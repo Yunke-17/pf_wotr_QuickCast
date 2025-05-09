@@ -9,13 +9,17 @@ using UnityEngine; // Required for Input class
 using UnityModManagerNet;
 using Kingmaker.PubSubSystem; // Added for EventBus and ILogMessageUIHandler
 using Kingmaker; // Added for Game
-using Kingmaker.UI.MVVM; // Added for RootUIContext
 using Kingmaker.UI.MVVM._VM.ActionBar; // Added for ActionBarVM, SelectorType
 using Kingmaker.UI.MVVM._VM.InGame; // Added for InGameVM, InGameStaticPartVM
 using Kingmaker.GameModes; // Added for GameModeType
 using Kingmaker.UnitLogic; // Added for Spellbook access
 using Kingmaker.EntitySystem.Entities; // Added for UnitEntityData
 using Kingmaker.UI.MVVM._PCView.ActionBar; // Added for ActionBarPCView
+using Kingmaker.UnitLogic.Abilities; // For AbilityData
+using Kingmaker.UI.UnitSettings; // Added for MechanicActionBarSlotSpell
+using Owlcat.Runtime.UI.Controls.Button; // Added for OwlcatMultiButton
+using Kingmaker.UI.MVVM; // Added for ViewBase
+using UniRx; // Corrected UniRx namespace
 
 namespace QuickCast
 {
@@ -23,11 +27,6 @@ namespace QuickCast
     {
         public static bool IsEnabled { get; private set; }
         public static UnityModManager.ModEntry ModEntry { get; private set; }
-
-        // Stores the currently active quick cast page. -1 means no page is active.
-        // 0-9 for spell levels 0-9, 10 for spell level 10 (mythic).
-        private static int _activeQuickCastPage = -1;
-        private static bool _isQuickCastModeActive = false;
 
         // Default key for returning to main hotbar
         private static readonly KeyCode ReturnKey = KeyCode.X;
@@ -46,6 +45,19 @@ namespace QuickCast
         // Cached FieldInfo for m_SpellsGroup to avoid repeated reflection
         private static FieldInfo _spellsGroupFieldInfo;
 
+        // Add this new field to track the previous state of spellbook UI activation
+        private static bool? _previousSpellbookActiveAndInteractableState = null;
+
+        private static FieldInfo _slotsListFieldInfo; // ActionBarGroupPCView.m_SlotsList
+        private static FieldInfo _mainButtonFieldInfo; // ActionBarSlotPCView.m_MainButton
+        private static FieldInfo _buttonIsHoveredFieldInfo; // OwlcatMultiButton.m_IsHovered
+        private static PropertyInfo _viewViewModelPropertyInfo; // ViewBase<T>.ViewModel
+        private static FieldInfo _baseSlotPCViewFieldInfo; // ActionBarBaseSlotPCView.m_SlotPCView
+        internal static ActionBarManager _actionBarManager; // Changed to internal static
+
+        // Reference to the VM hovered via patch
+        public static ActionBarSlotVM CurrentlyHoveredSpellbookSlotVM => QuickCastPatches.CurrentlyHoveredSpellbookSlotVM;
+
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
             ModEntry = modEntry;
@@ -55,7 +67,8 @@ namespace QuickCast
             modEntry.OnGUI = OnGUI;
 
             var harmony = new Harmony(modEntry.Info.Id);
-            // harmony.PatchAll(); // Comment out PatchAll
+            harmony.PatchAll(Assembly.GetExecutingAssembly()); // Apply all patches in this assembly
+            Log("Applied Harmony patches.");
 
             // Explicitly patch BindViewImplementation
             try
@@ -80,16 +93,17 @@ namespace QuickCast
             // Explicitly patch DestroyViewImplementation
             try
             {
-                var destroyViewMethod = typeof(ActionBarPCView).GetMethod("DestroyViewImplementation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                // Corrected to ActionBarBaseView as per UMM error log
+                var destroyViewMethod = typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarBaseView).GetMethod("DestroyViewImplementation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); 
                 if (destroyViewMethod != null)
                 {
                     var destroyViewPostfix = typeof(ActionBarPCView_Patches).GetMethod(nameof(ActionBarPCView_Patches.DestroyViewImplementation_Postfix), BindingFlags.Static | BindingFlags.Public);
                     harmony.Patch(destroyViewMethod, postfix: new HarmonyMethod(destroyViewPostfix));
-                    Log("Successfully patched ActionBarPCView.DestroyViewImplementation.");
+                    Log("Successfully patched ActionBarBaseView.DestroyViewImplementation."); 
                 }
                 else
                 {
-                    Log("Error: Could not find ActionBarPCView.DestroyViewImplementation method for patching.");
+                    Log("Error: Could not find ActionBarBaseView.DestroyViewImplementation method for patching."); 
                 }
             }
             catch (Exception ex)
@@ -115,7 +129,33 @@ namespace QuickCast
                 Log($"Error during reflection caching for m_SpellsGroup: {ex.Message}");
             }
 
-            Log("QuickCast Mod Load method finished."); // Changed log message slightly for clarity
+            // Cache reflection info for hover detection
+            try
+            {
+                _slotsListFieldInfo = AccessTools.Field(typeof(ActionBarGroupPCView), "m_SlotsList");
+                _mainButtonFieldInfo = AccessTools.Field(typeof(ActionBarSlotPCView), "m_MainButton");
+                _buttonIsHoveredFieldInfo = AccessTools.Field(typeof(OwlcatMultiButton), "m_IsHovered"); 
+                _viewViewModelPropertyInfo = AccessTools.Property(typeof(ActionBarSlotPCView), "ViewModel"); 
+                _baseSlotPCViewFieldInfo = AccessTools.Field(typeof(ActionBarBaseSlotPCView), "m_SlotPCView");
+
+                if (_slotsListFieldInfo == null) Log("Error caching m_SlotsList FieldInfo.");
+                if (_mainButtonFieldInfo == null) Log("Error caching m_MainButton FieldInfo.");
+                if (_buttonIsHoveredFieldInfo == null) Log("Warning: Could not cache m_IsHovered FieldInfo for OwlcatMultiButton."); 
+                if (_viewViewModelPropertyInfo == null) Log("Error caching ViewModel PropertyInfo.");
+                if (_baseSlotPCViewFieldInfo == null) Log("Error caching m_SlotPCView FieldInfo.");
+            }
+            catch (Exception ex)
+            {
+                 Log($"Exception during hover detection reflection caching: {ex.ToString()}");
+            }
+
+            _actionBarManager = new ActionBarManager(
+                ModEntry,
+                () => CachedActionBarPCView, 
+                () => _spellsGroupFieldInfo    
+            );
+
+            Log("QuickCast Mod Load method finished."); 
             return true;
         }
 
@@ -123,24 +163,28 @@ namespace QuickCast
         {
             IsEnabled = value;
             Log($"QuickCast Mod {(IsEnabled ? "Enabled" : "Disabled")}");
-            if (!IsEnabled && _isQuickCastModeActive)
+            if (!IsEnabled && _actionBarManager != null && _actionBarManager.IsQuickCastModeActive)
             {
-                // If mod is disabled while a page is active, reset the state.
-                DeactivateQuickCastMode();
+                _actionBarManager.TryDeactivateQuickCastMode(true); 
+                _previousSpellbookActiveAndInteractableState = null; 
             }
-            return true; // Accept the new state
+            return true; 
         }
 
         private static void OnUpdate(UnityModManager.ModEntry modEntry, float dt)
         {
-            if (!IsEnabled) return;
+            if (!IsEnabled || _actionBarManager == null) return;
+
+            // Clear the recently bound slots hash set at the beginning of each new frame (if frame changed)
+            ActionBarManager.ClearRecentlyBoundSlotsIfNewFrame();
 
             HandleInput();
         }
 
         private static void HandleInput()
         {
-            // Check for Ctrl key being held down for page activation
+            if (!IsEnabled || _actionBarManager == null) return;
+
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
 
             if (ctrlHeld)
@@ -149,179 +193,113 @@ namespace QuickCast
                 {
                     if (Input.GetKeyDown(kvp.Key))
                     {
-                        ActivateQuickCastPage(kvp.Value);
-                        return; // Consume input
+                        _actionBarManager.TryActivateQuickCastPage(kvp.Value);
+                        return; 
                     }
                 }
             }
-
-            // Check for ReturnKey
-            if (Input.GetKeyDown(ReturnKey))
+            else if (_actionBarManager.IsQuickCastModeActive) 
             {
-                if (_isQuickCastModeActive)
+                bool currentSpellbookActiveAndInteractable = IsSpellbookInterfaceActive(); 
+                if (_previousSpellbookActiveAndInteractableState == null || _previousSpellbookActiveAndInteractableState.Value != currentSpellbookActiveAndInteractable)
                 {
-                    DeactivateQuickCastMode();
+                    Log($"[QC Input] QC Active. Spellbook UI ActiveAndInteractable: {currentSpellbookActiveAndInteractable}");
+                    _previousSpellbookActiveAndInteractableState = currentSpellbookActiveAndInteractable;
                 }
-                // Potentially: if not in quick cast mode and X is pressed, do nothing or game's default X action.
-                // For now, it only acts as a return key if a page is active.
-                return; // Consume input if it deactivated a page
-            }
 
-            // Optional: Double-tap activation key to return (as per quickcast.md 3.2.4)
-            // This logic would be more complex, requiring tracking last key press time, etc.
-            // Will be added in a later stage if desired.
-        }
-
-        private static void ActivateQuickCastPage(int targetPageLevel)
-        {
-            Log($"Attempting to activate quick cast page: {targetPageLevel}");
-            var game = Game.Instance;
-            var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
-
-            if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null || actionBarVM == null)
-            {
-                Log("Error: ActionBarPCView, m_SpellsGroup FieldInfo, or ActionBarVM is not available. Cannot activate page via SetVisible.");
-                if (_isQuickCastModeActive) DeactivateQuickCastMode(); 
-                else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
-                return;
-            }
-
-            var currentUnit = actionBarVM.SelectedUnit.Value;
-            if (currentUnit == null)
-            {
-                Log("No unit selected. Cannot activate page.");
-                if (_isQuickCastModeActive) DeactivateQuickCastMode();
-                else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
-                return;
-            }
-
-            bool canOpenForTargetLevel = false;
-            if (currentUnit.Descriptor?.Spellbooks != null)
-            {
-                foreach (var spellbook in currentUnit.Descriptor.Spellbooks)
+                foreach (var kvpBinding in _actionBarManager.GetCastKeyToSlotMapping()) 
                 {
-                    if (spellbook.Blueprint.MaxSpellLevel >= targetPageLevel)
+                    KeyCode castKey = kvpBinding.Key;
+                    if (Input.GetKeyDown(castKey))
                     {
-                        if (spellbook.GetKnownSpells(targetPageLevel).Any() ||
-                            spellbook.GetMemorizedSpells(targetPageLevel).Any() ||
-                            (spellbook.Blueprint.Spontaneous && spellbook.GetSpecialSpells(targetPageLevel).Any()))
+                        if (currentSpellbookActiveAndInteractable) 
                         {
-                            canOpenForTargetLevel = true;
-                            break;
+                            AbilityData hoveredAbility = GetHoveredAbilityInSpellBookUIActions();
+                            
+                            if (hoveredAbility != null)
+                            {
+                                Log($"[QC Input] Attempting Binding: Key {castKey} pressed. Hovered: {hoveredAbility.Name}. QC Page: {_actionBarManager.ActiveQuickCastPage}");
+                                _actionBarManager.BindSpellToCastKey(_actionBarManager.ActiveQuickCastPage, castKey, hoveredAbility);
+                                return; 
+                            }
+                            else
+                            {
+                                Log($"[QC Input] Spellbook active, but no spell hovered. Attempting to CAST spell with key {castKey} from QuickCast page {_actionBarManager.ActiveQuickCastPage}.");
+                                _actionBarManager.AttemptToCastBoundSpell(castKey);
+                                return; 
+                            }
+                        }
+                        else
+                        {
+                            Log($"[QC Input] Spellbook NOT active. Attempting to CAST spell with key {castKey} from QuickCast page {_actionBarManager.ActiveQuickCastPage}.");
+                            _actionBarManager.AttemptToCastBoundSpell(castKey);
+                            return; 
                         }
                     }
                 }
             }
 
-            if (!canOpenForTargetLevel)
+            if (Input.GetKeyDown(ReturnKey)) 
             {
-                string charName = currentUnit.CharacterName;
-                string levelText = targetPageLevel == 0 ? "戏法" : $"{targetPageLevel}环";
-                string warningMessage = $"快捷施法: 角色 {charName} 没有 {levelText} 法术或对应法术书.";
-                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(warningMessage));
-                Log(warningMessage);
-                if (_isQuickCastModeActive) DeactivateQuickCastMode();
-                else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
-                return;
-            }
-
-            try
-            {
-                var spellsGroupView = _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
-                if (spellsGroupView == null)
+                if (_actionBarManager.IsQuickCastModeActive)
                 {
-                    Log("Error: m_SpellsGroup instance is null after reflection. Cannot call SetVisible.");
-                    return;
+                    _actionBarManager.TryDeactivateQuickCastMode();
+                    _previousSpellbookActiveAndInteractableState = null; 
+                    return; 
                 }
-
-                Log($"Calling SetVisible(true, true) on m_SpellsGroup for page {targetPageLevel}.");
-                spellsGroupView.SetVisible(true, true); 
-
-                if (game.CurrentMode == GameModeType.Default ||
-                    game.CurrentMode == GameModeType.TacticalCombat ||
-                    game.CurrentMode == GameModeType.Pause)
-                {
-                    actionBarVM.CurrentSpellLevel.Value = targetPageLevel;
-                    // actionBarVM.UpdateGroupState(ActionBarGroupType.Spell, true); // This might now be redundant
-                    Log($"Spell level set to {targetPageLevel}. Group state update call to VM is currently commented out.");
-                }
-                else
-                {
-                     Log($"Game not in a suitable mode ({game.CurrentMode}) to set spell level. Panel might show default or last level.");
-                }
-
-                _isQuickCastModeActive = true;
-                _activeQuickCastPage = targetPageLevel;
-
-                string pageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
-                if (_activeQuickCastPage == 10) pageNameDisplay = "10环(神话)";
-                string message = $"快捷施法: {pageNameDisplay} 已激活";
-                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
-                Log($"Internal: QuickCast Page {pageNameDisplay} Activated successfully via SetVisible.");
-
-            }
-            catch (Exception ex)
-            {
-                Log($"Error during ActivateQuickCastPage via SetVisible: {ex.ToString()}");
-                if (_isQuickCastModeActive) DeactivateQuickCastMode();
-                else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
             }
         }
 
-        private static void DeactivateQuickCastMode()
+        // Helper to check if the ActionBar's spellbook part is likely active and interactable
+        internal static bool IsSpellbookInterfaceActive() 
         {
-            Log("Attempting to deactivate quick cast mode via SetVisible.");
-            if (_isQuickCastModeActive)
+            if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null) return false;
+            try
             {
-                if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null)
+                var spellsGroupView = _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
+                return spellsGroupView != null && spellsGroupView.gameObject.activeInHierarchy;
+            }
+            catch (Exception ex)
+            {
+                Log($"Error checking IsSpellbookInterfaceActive: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static AbilityData GetHoveredAbilityInSpellBookUIActions()
+        {
+            var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
+            var hoveredVM = CurrentlyHoveredSpellbookSlotVM; 
+
+            if (actionBarVM == null || hoveredVM == null)
+            {
+                return null;
+            }
+
+            if (hoveredVM.SpellLevel == actionBarVM.CurrentSpellLevel.Value)
+            {
+                if (hoveredVM.MechanicActionBarSlot is MechanicActionBarSlotSpell gameSpellSlot)
                 {
-                    Log("Error: ActionBarPCView or m_SpellsGroup FieldInfo is not available. Cannot deactivate page via SetVisible.");
-                     var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
-                     if (actionBarVM != null) { 
-                         actionBarVM.UpdateGroupState(ActionBarGroupType.Spell, false);
-                         Log("Fallback: Called UpdateGroupState(Spell, false) on VM directly.");
-                     }
-                    _isQuickCastModeActive = false;
-                    _activeQuickCastPage = -1;
-                    string fallbackMessage = $"快捷施法: 返回主快捷栏 (fallback)";
-                    EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(fallbackMessage));
-                    return;
-                }
-
-                try
-                {
-                    var spellsGroupView = _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
-                    if (spellsGroupView == null)
-                    {
-                        Log("Error: m_SpellsGroup instance is null after reflection during deactivation. Cannot call SetVisible.");
-                        _isQuickCastModeActive = false;
-                        _activeQuickCastPage = -1;
-                         string errorMsg = $"快捷施法: 返回主快捷栏 (error reflecting m_SpellsGroup)"; // More specific error
-                        EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(errorMsg));
-                        return;
-                    }
-
-                    Log("Calling SetVisible(false, true) on m_SpellsGroup.");
-                    spellsGroupView.SetVisible(false, true); 
-
-                    string exitedPageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
-                    if (_activeQuickCastPage == 10) exitedPageNameDisplay = "10环(神话)";
-                    string message = $"快捷施法: 返回主快捷栏";
-                    EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
-                    Log($"Internal: Returned to Main Hotbar from Page {exitedPageNameDisplay} via SetVisible.");
-
-                    _isQuickCastModeActive = false;
-                    _activeQuickCastPage = -1;
-                }
-                catch (Exception ex)
-                {
-                    Log($"Error during DeactivateQuickCastMode via SetVisible: {ex.ToString()}");
-                    _isQuickCastModeActive = false;
-                    _activeQuickCastPage = -1;
-                    string errorMsg = $"快捷施法: 返回主快捷栏 (exception)";
-                    EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(errorMsg));
+                    return gameSpellSlot.Spell;
                 }
             }
+            
+            return null; 
+        }
+
+        // Helper to get the spellbook group view instance
+        private static ActionBarGroupPCView GetSpellbookGroupView()
+        {
+             if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null) return null;
+             try
+             {
+                 return _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
+             }
+             catch (Exception ex)
+             {
+                  Log($"Error getting SpellbookGroupView: {ex.Message}");
+                  return null;
+             }
         }
 
         private static void OnGUI(UnityModManager.ModEntry modEntry)
@@ -337,22 +315,17 @@ namespace QuickCast
         }
     }
 
-    // Harmony Patches
-    // [HarmonyPatch] // Remove this class-level attribute if all patches within are manual or more specific
-    public static class ActionBarPCView_Patches
+    public static class ActionBarPCView_Patches 
     {
-        // No attributes needed here if patched manually by HarmonyMethod
         public static void BindViewImplementation_Postfix(ActionBarPCView __instance)
         {
             Main.Log("ActionBarPCView_BindViewImplementation_Postfix: ActionBarPCView instance captured.");
             Main.CachedActionBarPCView = __instance;
         }
-
-        // No attributes needed here if patched manually by HarmonyMethod
         public static void DestroyViewImplementation_Postfix()
         {
-            Main.Log("ActionBarPCView_DestroyViewImplementation_Postfix: ActionBarPCView instance cleared.");
-            Main.CachedActionBarPCView = null;
+             Main.Log("ActionBarPCView_DestroyViewImplementation_Postfix: ActionBarPCView instance cleared.");
+             Main.CachedActionBarPCView = null;
         }
     }
 }
