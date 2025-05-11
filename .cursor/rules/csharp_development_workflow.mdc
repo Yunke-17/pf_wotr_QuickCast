@@ -1,6 +1,6 @@
 ---
-description: *.cs
-globs: 
+description: 
+globs: *.cs,*.md
 alwaysApply: false
 ---
 # C# 开发工作流与功能点进度追踪规范

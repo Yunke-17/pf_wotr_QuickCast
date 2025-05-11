@@ -26,9 +26,11 @@ namespace QuickCast
         // Stores the original content of the main action bar slots that were overridden by the mod
         private readonly Dictionary<int, MechanicActionBarSlot> _mainBarOverriddenSlotsOriginalContent;
         // Maps a cast key (e.g., KeyCode.Alpha1) to a main action bar slot index (e.g., 0)
+        // This mapping now primarily serves to link a game's native Cast Key (used for actual casting)
+        // to a Logical Slot Index (0-11) which is used internally for binding and display.
         private readonly Dictionary<KeyCode, int> _castKeyToMainBarSlotIndexMapping;
-        // Stores the mod's spell bindings: SpellLevel -> (CastKey -> AbilityData)
-        public static Dictionary<int, Dictionary<KeyCode, AbilityData>> QuickCastBindings { get; set; } // Made static and public for broader access, will need proper init and persistence later
+        // Stores the mod's spell bindings: SpellLevel -> (LogicalSlotIndex -> AbilityData)
+        public static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings { get; set; } 
 
         private readonly MechanicActionBarSlotEmpty _emptySlotPlaceholder;
 
@@ -60,14 +62,14 @@ namespace QuickCast
 
             // Initialize QuickCastBindings - for now, empty.
             // In a real scenario, this would be loaded from a save file or UMM settings.
-            if (QuickCastBindings == null) // Ensure it's initialized if static
+            if (QuickCastBindings == null) 
             {
-                 QuickCastBindings = new Dictionary<int, Dictionary<KeyCode, AbilityData>>();
+                 QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
             }
             // TODO: Add test data to QuickCastBindings for development if needed
-            // Example:
-            // if (!QuickCastBindings.ContainsKey(1)) QuickCastBindings[1] = new Dictionary<KeyCode, AbilityData>();
-            // QuickCastBindings[1][KeyCode.Alpha1] = someDummyAbilityDataForLevel1Slot1;
+            // Example for new structure:
+            // if (!QuickCastBindings.ContainsKey(1)) QuickCastBindings[1] = new Dictionary<int, AbilityData>();
+            // QuickCastBindings[1][0] = someDummyAbilityDataForLevel1Slot0; // Slot 0 for Alpha1
         }
 
         // Public static method to clear the tracking info at the start of a new frame
@@ -139,22 +141,21 @@ namespace QuickCast
                 return;
             }
 
-            // Clear at the beginning of a refresh operation if it's a new frame,
-            // or ensure it's cleared if we are in the same frame but doing another refresh (e.g. multiple binds)
             if (Time.frameCount != FrameOfLastBindingRefresh) {
                 RecentlyBoundSlotHashes.Clear();
             }
-            FrameOfLastBindingRefresh = Time.frameCount; // Mark this frame as having a binding refresh
+            FrameOfLastBindingRefresh = Time.frameCount; 
 
             Log($"[ABM] Refreshing main action bar for quick cast page {_activeQuickCastPage}.");
-            Dictionary<KeyCode, AbilityData> currentLevelBindings = null;
+            Dictionary<int, AbilityData> currentLevelBindings = null;
             if (QuickCastBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
             {
                 currentLevelBindings = bindingsForLevel;
                 Log($"[ABM RefreshDetails] Found {bindingsForLevel.Count} bindings for active page {_activeQuickCastPage}.");
                 foreach (var kvp in bindingsForLevel)
                 {
-                    Log($"[ABM RefreshDetails]   Binding: Key {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
+                    // kvp.Key is now logicalSlotIndex, kvp.Value is AbilityData
+                    Log($"[ABM RefreshDetails]   Binding: SlotIndex {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
                 }
             }
             else
@@ -162,72 +163,74 @@ namespace QuickCast
                 Log($"[ABM RefreshDetails] No bindings dictionary found for active page {_activeQuickCastPage}.");
             }
 
-            foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping)
+            // Iterate through the _castKeyToMainBarSlotIndexMapping to know which UI slots to update.
+            // This mapping tells us which game's native Cast Key (e.g. Alpha1) corresponds to which logical slot index (e.g. 0).
+            foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping) 
             {
-                KeyCode castKey = mappingEntry.Key;
-                int slotIndexToRefresh = mappingEntry.Value;
+                // KeyCode castKey = mappingEntry.Key; // This is the game's native cast key for the slot
+                int logicalSlotIndexToRefresh = mappingEntry.Value; // This is the slot index (0, 1, 2...)
 
-                if (slotIndexToRefresh >= 0 && slotIndexToRefresh < actionBarVM.Slots.Count)
+                if (logicalSlotIndexToRefresh >= 0 && logicalSlotIndexToRefresh < actionBarVM.Slots.Count)
                 {
-                    ActionBarSlotVM slotVM = actionBarVM.Slots[slotIndexToRefresh];
+                    ActionBarSlotVM slotVM = actionBarVM.Slots[logicalSlotIndexToRefresh];
                     if (slotVM != null)
                     {
-                        // We assume the original content was already saved when TryActivateQuickCastPage was first called.
-                        // Or, if called after a bind, the slot is already showing a QuickCast item or an empty placeholder.
-
                         AbilityData boundAbility = null;
-                        currentLevelBindings?.TryGetValue(castKey, out boundAbility);
+                        // Try to get the bound ability for the current logicalSlotIndex from the currentLevelBindings
+                        currentLevelBindings?.TryGetValue(logicalSlotIndexToRefresh, out boundAbility);
 
                         if (boundAbility != null)
                         {
                             var newSpellSlot = new QuickCastMechanicActionBarSlotSpell(boundAbility, currentUnit);
                             slotVM.SetMechanicSlot(newSpellSlot);
-                            RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode()); // Track this newly placed slot
-                            Log($"[ABM] Refreshed Slot {slotIndexToRefresh} to spell: {boundAbility.Name}. Hash: {newSpellSlot.GetHashCode()}");
+                            RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode()); 
+                            Log($"[ABM] Refreshed Slot UI Index {logicalSlotIndexToRefresh} to spell: {boundAbility.Name}. Hash: {newSpellSlot.GetHashCode()}");
                             
-                            // Corrected log to check VM state after setting slot
                             string iconName = slotVM.Icon.Value != null ? slotVM.Icon.Value.name : "null";
-                            string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null"; // Get title from the MechanicActionBarSlot
-                            Log($"[ABM] After SetMechanicSlot for Slot {slotIndexToRefresh}: VM reports Icon as {iconName}, Spell as {spellName}");
+                            string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null"; 
+                            Log($"[ABM] After SetMechanicSlot for Slot UI Index {logicalSlotIndexToRefresh}: VM reports Icon as {iconName}, Spell as {spellName}");
                         }
                         else
                         {
                             slotVM.SetMechanicSlot(_emptySlotPlaceholder);
-                            Log($"[ABM] Refreshed Slot {slotIndexToRefresh} cleared (no binding for key {castKey} on level {_activeQuickCastPage}).");
+                            Log($"[ABM] Refreshed Slot UI Index {logicalSlotIndexToRefresh} cleared (no binding for logical slot {logicalSlotIndexToRefresh} on level {_activeQuickCastPage}).");
                         }
                     }
                 }
             }
         }
 
-        public void BindSpellToCastKey(int spellLevel, KeyCode castKey, AbilityData spellData)
+        // Method to bind a spell to a specific logical slot on a given spell level page
+        public void BindSpellToLogicalSlot(int spellLevel, int logicalSlotIndex, AbilityData spellData)
         {
             if (spellData == null)
             {
-                Log($"[ABM] BindSpellToCastKey: spellData is null for level {spellLevel}, key {castKey}. Cannot bind.");
+                Log($"[ABM] BindSpellToLogicalSlot: spellData is null for level {spellLevel}, slotIndex {logicalSlotIndex}. Cannot bind.");
                 return;
             }
 
-            if (!_castKeyToMainBarSlotIndexMapping.ContainsKey(castKey))
+            // Validate logicalSlotIndex (e.g., 0-11 if we support 12 slots)
+            // This check depends on how many slots _castKeyToMainBarSlotIndexMapping covers or a fixed max.
+            // For now, assuming valid if it's within typical action bar range.
+            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) // Assuming 12 slots max for now
             {
-                Log($"[ABM] BindSpellToCastKey: key {castKey} is not a registered cast key. Cannot bind.");
+                Log($"[ABM] BindSpellToLogicalSlot: logicalSlotIndex {logicalSlotIndex} is out of range. Cannot bind.");
                 return;
             }
 
             if (!QuickCastBindings.ContainsKey(spellLevel))
             {
-                QuickCastBindings[spellLevel] = new Dictionary<KeyCode, AbilityData>();
+                QuickCastBindings[spellLevel] = new Dictionary<int, AbilityData>();
             }
-            QuickCastBindings[spellLevel][castKey] = spellData;
-            Log($"[ABM] Spell '{spellData.Name}' (Lvl: {spellData.SpellLevel}, From UI Lvl: {spellLevel}) bound to CastKey {castKey}.");
+            QuickCastBindings[spellLevel][logicalSlotIndex] = spellData;
+            Log($"[ABM] Spell '{spellData.Name}' (Lvl: {spellData.SpellLevel}, From UI Lvl: {spellLevel}) bound to LogicalSlotIndex {logicalSlotIndex}.");
 
-            // Enhanced logging for binding
             Log($"[ABM BindDetails] Current Bindings for Level {spellLevel}:");
             if (QuickCastBindings.TryGetValue(spellLevel, out var bindings))
             {
                 foreach (var kvp in bindings)
                 {
-                    Log($"[ABM BindDetails]   Key: {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
+                    Log($"[ABM BindDetails]   LogicalSlot: {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
                 }
             }
             else
@@ -235,14 +238,10 @@ namespace QuickCast
                 Log("[ABM BindDetails]   No bindings found for this level after update.");
             }
 
-            // If this binding is for the currently active quick cast page, refresh the action bar display immediately
             if (_isQuickCastModeActive && _activeQuickCastPage == spellLevel)
             {
                 RefreshMainActionBarForCurrentQuickCastPage();
             }
-            
-            // TODO: Add UI feedback for binding success
-            // TODO: Trigger save of QuickCastBindings (persistence)
         }
 
         public void TryActivateQuickCastPage(int targetPageLevel)
@@ -251,14 +250,22 @@ namespace QuickCast
             var game = Game.Instance;
             var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             var cachedView = _getActionBarPCView();
-            var spellsField = _getSpellsGroupFieldInfo();
+            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // This is already cached in Main and passed to ABM constructor
 
-            if (cachedView == null || spellsField == null || actionBarVM == null || actionBarVM.Slots == null)
+            if (cachedView == null)
             {
-                Log("[ABM] Error: ActionBarPCView, m_SpellsGroup, ActionBarVM or ActionBarVM.Slots is not available.");
-                if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true);
-                else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
-                return;
+                Log("[ABM TryActivate] Error: Cached ActionBarPCView is null.");
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+            }
+            if (spellsFieldInfo == null)
+            {
+                Log("[ABM TryActivate] Error: spellsGroupFieldInfo (for m_SpellsGroup) is null.");
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+            }
+            if (actionBarVM == null)
+            {
+                Log("[ABM TryActivate] Error: ActionBarVM is null.");
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
             }
 
             var currentUnit = actionBarVM.SelectedUnit.Value;
@@ -270,96 +277,102 @@ namespace QuickCast
                 return;
             }
 
-            // First, if already in quick cast mode, restore the previous state
+            // If already in quick cast mode, restore the previous state
             if (_isQuickCastModeActive)
             {
                 RestoreMainActionBarDisplay();
-                // We are switching from one quick cast page to another,
-                // so don't fully deactivate, just prepare for the new page.
             }
-            _mainBarOverriddenSlotsOriginalContent.Clear(); // Ensure it's clean before populating for the new page
+            _mainBarOverriddenSlotsOriginalContent.Clear(); // Ensure it's clean before potentially populating for the new page
 
-            bool canOpenForTargetLevel = false;
-            if (currentUnit.Descriptor?.Spellbooks != null)
+            // Save the original content of the action bar slots that QuickCast will override.
+            // This must be done AFTER any restore (if switching pages) and BEFORE RefreshMainActionBarForCurrentQuickCastPage.
+            var currentActionBarVMForSaving = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
+            if (currentActionBarVMForSaving != null)
             {
-                foreach (var spellbook in currentUnit.Descriptor.Spellbooks)
+                Log("[ABM TryActivate] Attempting to save current action bar state before override for QuickCast page.");
+                foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping)
                 {
-                    if (spellbook.Blueprint.MaxSpellLevel >= targetPageLevel)
+                    int slotIndexToSave = mappingEntry.Value; // This is the UI slot index (0, 1, etc.)
+                    if (slotIndexToSave >= 0 && slotIndexToSave < currentActionBarVMForSaving.Slots.Count)
                     {
-                        if (spellbook.GetKnownSpells(targetPageLevel).Any() ||
-                            spellbook.GetMemorizedSpells(targetPageLevel).Any() ||
-                            (spellbook.Blueprint.Spontaneous && spellbook.GetSpecialSpells(targetPageLevel).Any()))
+                        ActionBarSlotVM slotVM = currentActionBarVMForSaving.Slots[slotIndexToSave];
+                        if (slotVM != null)
                         {
-                            canOpenForTargetLevel = true;
-                            break;
+                            // Important: We need to ensure we are not saving a QuickCastMechanicActionBarSlotSpell
+                            // if, for some reason, a previous QuickCast state wasn't fully cleared.
+                            // RestoreMainActionBarDisplay should handle this, but as a safeguard:
+                            if (slotVM.MechanicActionBarSlot is QuickCastMechanicActionBarSlotSpell)
+                            {
+                                Log($"[ABM TryActivate WARNING] Slot {slotIndexToSave} contained a QC spell even after potential restore. This might indicate an issue. Not saving it as original.");
+                                // Optionally, try to get a more "original" state or leave it to be overwritten.
+                                // For now, we just log and it will be treated as if it was empty or had non-QC content that was already restored.
+                            }
+                            else
+                            {
+                                _mainBarOverriddenSlotsOriginalContent[slotIndexToSave] = slotVM.MechanicActionBarSlot;
+                                Log($"[ABM TryActivate] Saved original content for slot index {slotIndexToSave}: {slotVM.MechanicActionBarSlot?.GetType().Name}");
+                            }
                         }
+                        else
+                        {
+                            Log($"[ABM TryActivate] Cannot save original for slot index {slotIndexToSave}: SlotVM is null.");
+                        }
+                    }
+                    else
+                    {
+                        Log($"[ABM TryActivate] Cannot save original for slot index {slotIndexToSave}: Index out of bounds for {currentActionBarVMForSaving.Slots.Count} slots.");
                     }
                 }
             }
-
-            if (!canOpenForTargetLevel)
+            else
             {
-                string charName = currentUnit.CharacterName;
-                string levelText = targetPageLevel == 0 ? "戏法" : $"{targetPageLevel}环";
-                string warningMessage = $"快捷施法: 角色 {charName} 没有 {levelText} 法术或对应法术书.";
-                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(warningMessage));
-                Log($"[ABM] {warningMessage}");
-                // If we were in quick cast mode and tried to switch to an invalid page, restore the bar.
-                if (_isQuickCastModeActive) RestoreMainActionBarDisplay(); 
-                _activeQuickCastPage = -1; _isQuickCastModeActive = false; // Fully deactivate
-                return;
+                 Log("[ABM TryActivate] Cannot save original action bar state: currentActionBarVMForSaving is null.");
             }
 
             try
             {
-                // Save original contents BEFORE they might be changed by RefreshMainActionBarForCurrentQuickCastPage
-                // This needs to be done carefully if we are switching between quick cast pages.
-                // The current logic in TryActivateQuickCastPage already calls RestoreMainActionBarDisplay 
-                // if _isQuickCastModeActive is true, which clears _mainBarOverriddenSlotsOriginalContent.
-                // Then it sets _mainBarOverriddenSlotsOriginalContent.Clear(); again.
-                // So, we need to save originals for the *new* page *after* any restoration but *before* the refresh.
+                var actionBarVMToSetLevel = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
 
-                // If not already in quick cast mode, or if switching pages, save current bar state before overriding.
-                // The _mainBarOverriddenSlotsOriginalContent should be clear at this point if we came from another QC page (due to Restore) or from normal mode.
-                if (_mainBarOverriddenSlotsOriginalContent.Count == 0) // Only save if it's currently empty (i.e., we are not just re-activating the same page)
+                if (cachedView == null)
                 {
-                    Log("[ABM] Saving current action bar state before override.");
-                    foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping)
-                    {
-                        int slotIndexToSave = mappingEntry.Value;
-                        if (slotIndexToSave >= 0 && slotIndexToSave < actionBarVM.Slots.Count)
-                        {
-                            ActionBarSlotVM slotVM = actionBarVM.Slots[slotIndexToSave];
-                            if (slotVM != null)
-                            {
-                                _mainBarOverriddenSlotsOriginalContent[slotIndexToSave] = slotVM.MechanicActionBarSlot;
-                            }
-                        }
-                    }
+                    Log("[ABM TryActivate] Error: Cached ActionBarPCView is null.");
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                }
+                if (spellsFieldInfo == null)
+                {
+                    Log("[ABM TryActivate] Error: spellsGroupFieldInfo (for m_SpellsGroup) is null.");
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                }
+                if (actionBarVMToSetLevel == null)
+                {
+                    Log("[ABM TryActivate] Error: ActionBarVM for setting spell level is null.");
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
 
-                // Open the spellbook UI part
-                var spellsGroupView = spellsField.GetValue(cachedView) as ActionBarGroupPCView;
-                if (spellsGroupView == null)
+                var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
+                if (spellsGroupInstance == null)
                 {
-                    Log("[ABM] Error: m_SpellsGroup instance is null after reflection. Cannot open spellbook UI part.");
-                    RestoreMainActionBarDisplay(); // Critical failure, restore bar
-                     _activeQuickCastPage = -1; _isQuickCastModeActive = false;
-                    return;
+                    Log("[ABM TryActivate] Error: Failed to get m_SpellsGroup instance from ActionBarPCView via reflection.");
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
-                Log($"[ABM] Calling SetVisible(true, true) on m_SpellsGroup for page {targetPageLevel}.");
-                spellsGroupView.SetVisible(true, true);
 
+                Log("[ABM TryActivate] Attempting to directly call m_SpellsGroup.SetVisible(true, true).");
+                spellsGroupInstance.SetVisible(true, true); // Force visibility
+                Log("[ABM TryActivate] Called m_SpellsGroup.SetVisible(true, true).");
+
+                // Set the spell level in the ViewModel AFTER making the spell group visible
+                // because SetVisible might trigger other groups to hide and could potentially reset spell level if done before.
                 if (game.CurrentMode == GameModeType.Default ||
                     game.CurrentMode == GameModeType.TacticalCombat ||
                     game.CurrentMode == GameModeType.Pause)
                 {
-                    actionBarVM.CurrentSpellLevel.Value = targetPageLevel;
-                    Log($"[ABM] Spell level set to {targetPageLevel}.");
+                    Log($"[ABM TryActivate] Setting CurrentSpellLevel.Value to {targetPageLevel}. Previous value: {actionBarVMToSetLevel.CurrentSpellLevel.Value}");
+                    actionBarVMToSetLevel.CurrentSpellLevel.Value = targetPageLevel;
+                    Log($"[ABM TryActivate] Spell level set to {targetPageLevel} via VM. New value: {actionBarVMToSetLevel.CurrentSpellLevel.Value}");
                 }
                 else
                 {
-                    Log($"[ABM] Game not in a suitable mode ({game.CurrentMode}) to set spell level.");
+                    Log($"[ABM TryActivate] Game not in a suitable mode ({game.CurrentMode}) to set spell level.");
                 }
 
                 _isQuickCastModeActive = true;
@@ -393,17 +406,17 @@ namespace QuickCast
             RestoreMainActionBarDisplay();
 
             var cachedView = _getActionBarPCView();
-            var spellsField = _getSpellsGroupFieldInfo();
+            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // This is already cached in Main and passed to ABM constructor
 
-            if (cachedView != null && spellsField != null)
+            if (cachedView != null && spellsFieldInfo != null)
             {
                 try
                 {
-                    var spellsGroupView = spellsField.GetValue(cachedView) as ActionBarGroupPCView;
-                    if (spellsGroupView != null)
-            {
+                    var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
+                    if (spellsGroupInstance != null)
+                    {
                         Log("[ABM] Calling SetVisible(false, true) on m_SpellsGroup.");
-                        spellsGroupView.SetVisible(false, true);
+                        spellsGroupInstance.SetVisible(false, true);
                     }
                     else
                     {
@@ -441,7 +454,7 @@ namespace QuickCast
             }
         }
 
-        public void AttemptToCastBoundSpell(KeyCode castKey)
+        public void AttemptToCastBoundSpell(KeyCode castKey) // castKey is the game's native key (e.g. KeyCode.Alpha1)
         {
             if (!_isQuickCastModeActive || _activeQuickCastPage == -1)
             {
@@ -449,12 +462,19 @@ namespace QuickCast
                 return;
             }
 
-            Log($"[ABM CastAttempt] Attempting to cast spell for key {castKey} on page {_activeQuickCastPage}");
+            // Convert the game's native castKey to its corresponding logicalSlotIndex
+            if (!_castKeyToMainBarSlotIndexMapping.TryGetValue(castKey, out int logicalSlotIndex))
+            {
+                Log($"[ABM CastAttempt] Key {castKey} is not a mapped QuickCast CastKey. Cannot determine logical slot.");
+                return; // This key isn't one of the ones QuickCast manages for casting (e.g. not Alpha1-6)
+            }
+
+            Log($"[ABM CastAttempt] Attempting to cast spell for native key {castKey} (LogicalSlot {logicalSlotIndex}) on page {_activeQuickCastPage}");
 
             AbilityData abilityToCast = null;
             if (QuickCastBindings.TryGetValue(_activeQuickCastPage, out var pageBindings))
             {
-                if (pageBindings.TryGetValue(castKey, out var spell))
+                if (pageBindings.TryGetValue(logicalSlotIndex, out var spell))
                 {
                     abilityToCast = spell;
                 }
@@ -476,24 +496,37 @@ namespace QuickCast
                     return;
                 }
 
-                Log($"[ABM CastAttempt] Found spell '{abilityToCast.Name}' for key {castKey}. TargetAnchor: {abilityToCast.TargetAnchor}, Range: {abilityToCast.Range}");
+                Log($"[ABM CastAttempt] Found spell '{abilityToCast.Name}' for native key {castKey} (LogicalSlot {logicalSlotIndex}). TargetAnchor: {abilityToCast.TargetAnchor}, Range: {abilityToCast.Range}");
 
+                bool castInitiated = false;
                 if (abilityToCast.TargetAnchor == AbilityTargetAnchor.Owner || abilityToCast.Range == AbilityRange.Personal)
                 {
                     Log($"[ABM CastAttempt] Casting self-targeted or personal range spell: {abilityToCast.Name}");
                     caster.Commands.Run(UnitUseAbility.CreateCastCommand(abilityToCast, caster));
+                    castInitiated = true;
                 }
                 else
                 {
                     Log($"[ABM CastAttempt] Setting ability for target selection: {abilityToCast.Name}");
                     Game.Instance.SelectedAbilityHandler.SetAbility(abilityToCast);
+                    castInitiated = true;
+                }
+
+                // Check for Auto Return after cast initiation
+                if (castInitiated && Main.settings != null && Main.settings.AutoReturnAfterCast)
+                {
+                    Log($"[ABM CastAttempt] Auto-returning to main hotbar after initiating cast for '{abilityToCast.Name}'.");
+                    // We might want a slight delay here if it feels too jarring, but TryDeactivateQuickCastMode itself doesn't have a delay.
+                    // For now, direct call.
+                    TryDeactivateQuickCastMode(false); 
+                    // Note: If TryDeactivateQuickCastMode is called, it will also clear _lastPageActivationKeyPressed in Main.cs if we make that call from here.
+                    // However, TryDeactivateQuickCastMode doesn't know about those Main.cs static fields directly.
+                    // The _previousSpellbookActiveAndInteractableState is reset in Main.cs when TryDeactivate is called from there.
                 }
             }
             else
             {
-                Log($"[ABM CastAttempt] No spell bound to key {castKey} on page {_activeQuickCastPage}.");
-                // Optionally, provide feedback to the player (e.g., a subtle sound or log message)
-                // EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage($"快捷键 {castKey} 未绑定法术"));
+                Log($"[ABM CastAttempt] No spell bound to native key {castKey} (LogicalSlot {logicalSlotIndex}) on page {_activeQuickCastPage}.");
             }
         }
     }
