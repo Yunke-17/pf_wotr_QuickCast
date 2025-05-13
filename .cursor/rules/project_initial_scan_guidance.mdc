@@ -1,6 +1,6 @@
 ---
-description: 
-globs: *.cs,*.md
+description: 新开一个窗口时进行
+globs: 
 alwaysApply: false
 ---
 # 项目初始扫描引导

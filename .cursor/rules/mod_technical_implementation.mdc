@@ -12,16 +12,19 @@ alwaysApply: false
 参考 `[quickcast.md](mdc:quickcast.md)` 第 6.1 节。
 
 *   **Unity Mod Manager (UMM)**: 使用社区常用的 UMM 框架进行开发，Mod 入口、设置界面、日志等均通过 UMM 管理。
-*   **HarmonyLib**: 必须使用 Harmony 库进行游戏运行时代码注入（Patching），以便修改或扩展游戏原有功能，并访问 `private` 或 `protected` 的成员。
+*   **HarmonyLib**: 必须使用 Harmony 库进行游戏运行时代码注入（Patching），以便修改或扩展游戏原有功能，并访问 `private` 或 `protected` 的成员。**然而，鉴于目前项目已采用 Publicized Assembly-CSharp.dll，对 Harmony 的依赖可以有所降低，部分原先需要Patch才能访问的成员可能已变为 public。**
 
 ## 2. 游戏代码分析与交互
 
 参考 `[quickcast.md](mdc:quickcast.md)` 第 6.1 节 和 `[注意事项.md](mdc:注意事项.md)` 第 6, 8 点，以及 `forced_decompiled_code_reference.mdc` 规则。
 
-*   **反编译**: 必须使用如 dnSpy, ILSpy, JetBrains dotPeek 等工具对游戏核心程序集（主要是 `Assembly-CSharp.dll` 及相关依赖）进行反编译。
-*   **代码定位**: Mod 与游戏系统交互的任何方面（如获取法术信息 `AbilityData`、角色信息 `UnitEntityData`、操作栏状态 `ActionBarVM`、模拟行动栏格子内容填充 `MechanicActionBarSlot`, `QuickCastMechanicActionBarSlotSpell`、触发施法 `UnitUseAbility`、处理目标选择 `SelectedAbilityHandler`、监听UI事件等）**必须**基于对反编译代码的分析，以准确识别相关类、方法、属性、字段和事件。
-*   **核心参考路径**: 强制参考 `C:\Users\ToisnaLey\Desktop\C\Assembly-CSharp` 下的反编译代码。
-*   **路径约定**: 在Mod代码内部进行游戏资源或代码符号引用时，优先使用相对命名空间和类型名。对于本地开发环境的反编译代码查阅，则使用上述绝对路径。
+*   **反编译与 Publicized 程序集**: 
+    *   虽然传统的反编译工具（如 dnSpy, ILSpy, JetBrains dotPeek）仍可用于理解游戏逻辑，但本项目当前使用的是 **Publicized `Assembly-CSharp.dll`**。这意味着许多原先为 `private` 或 `protected` 的类成员（字段、方法、属性）已被强行修改为 `public`。
+    *   **优势**: 这极大地简化了与游戏代码的直接交互，可以显著减少对反射（Reflection）的依赖，也可能减少某些情况下对 Harmony Patch 的需求，使得代码更简洁、直接，且性能可能略有提升。
+    *   **注意**: 尽管如此，开发者仍需结合反编译工具来理解代码结构和逻辑流程，因为 Publicized 版本仅改变了访问修饰符，并未改变代码的内在行为。
+*   **代码定位**: Mod 与游戏系统交互的任何方面（如获取法术信息 `AbilityData`、角色信息 `UnitEntityData`、操作栏状态 `ActionBarVM`、模拟行动栏格子内容填充 `MechanicActionBarSlot`, `QuickCastMechanicActionBarSlotSpell`、触发施法 `UnitUseAbility`、处理目标选择 `SelectedAbilityHandler`、监听UI事件等）**必须**基于对反编译代码（以及 Publicized 版本带来的可见性变化）的分析，以准确识别相关类、方法、属性、字段和事件。
+*   **核心参考路径**: 强制参考 `C:\Users\ToisnaLey\Desktop\Decompilation\Assembly-CSharp` 下的代码（无论是原始反编译版还是 Publicized 版，理解其结构是关键）。
+*   **路径约定**: 在Mod代码内部进行游戏资源或代码符号引用时，优先使用相对命名空间和类型名。对于本地开发环境的代码查阅，则使用上述绝对路径。
 
 ## 3. 数据持久化
 

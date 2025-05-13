@@ -2,38 +2,44 @@ using HarmonyLib;
 using Kingmaker.UI.MVVM._VM.ActionBar;
 using Kingmaker.UnitLogic.Abilities;
 using Kingmaker.UI.UnitSettings;
-using Kingmaker; // For Game
-using UnityEngine; // For KeyCode, Input
+using Kingmaker; // 用于 Game
+using UnityEngine; // 用于 KeyCode, Input
 
 namespace QuickCast
 {
+    /// <summary>
+    /// 此文件包含Mod使用的所有Harmony补丁。
+    /// </summary>
     public static class QuickCastPatches
     {
-        // Static field to hold the reference to the currently hovered slot VM in the spellbook UI
-        // NOTE: This needs to be cleared appropriately when the spellbook UI closes or QC mode ends.
+        #region 共享状态与工具
+        // 静态字段，用于保存对法术书UI中当前悬停的槽位VM的引用
+        // 注意：当法术书UI关闭或QC模式结束时，需要适当地清除此字段。
         public static ActionBarSlotVM CurrentlyHoveredSpellbookSlotVM = null;
+        #endregion
 
-        [HarmonyPatch(typeof(ActionBarSlotVM), nameof(ActionBarSlotVM.OnHover))] 
+        #region ActionBarSlotVM 补丁 (法术书悬停检测与点击控制)
+        [HarmonyPatch(typeof(ActionBarSlotVM), nameof(ActionBarSlotVM.OnHover))]
         static class ActionBarSlotVM_OnHover_Patch
         {
             static void Postfix(ActionBarSlotVM __instance, bool state)
             {
-                // Only monitor hover state when QuickCast mode is active and the spellbook UI is likely visible
+                // 仅当 QuickCast 模式激活且法术书UI可能可见时才监视悬停状态
                 if (Main.IsEnabled && Main._actionBarManager != null && Main._actionBarManager.IsQuickCastModeActive && Main.IsSpellbookInterfaceActive())
                 {
-                    // Check if this slot VM is likely from the spellbook group (e.g., has a valid SpellLevel)
-                    // Or alternatively, check if its MechanicActionBarSlot is a spell type.
-                    // Checking SpellLevel >= 0 is a simple heuristic.
+                    // 检查此槽位VM是否可能来自法术书组（例如，具有有效的SpellLevel）
+                    // 或者，检查其 MechanicActionBarSlot 是否为法术类型。
+                    // 检查 SpellLevel >= 0 是一个简单的启发式方法。
                     if (__instance.SpellLevel >= 0 && __instance.MechanicActionBarSlot is MechanicActionBarSlotSpell)
                     {
-                        if (state) // Mouse Enter
+                        if (state) // 鼠标进入
                         {
                             CurrentlyHoveredSpellbookSlotVM = __instance;
-                             // Main.Log($"[Patch Hover] Enter: Slot Lvl {__instance.SpellLevel}, Spell: {(__instance.MechanicActionBarSlot as MechanicActionBarSlotSpell)?.Spell?.Name}");
+                            // Main.Log($"[Patch Hover] Enter: Slot Lvl {__instance.SpellLevel}, Spell: {(__instance.MechanicActionBarSlot as MechanicActionBarSlotSpell)?.Spell?.Name}");
                         }
-                        else // Mouse Exit
+                        else // 鼠标移出
                         {
-                            // If the mouse is exiting the currently stored hovered VM, clear it.
+                            // 如果鼠标正在移出当前存储的悬停VM，则清除它。
                             if (CurrentlyHoveredSpellbookSlotVM == __instance)
                             {
                                 CurrentlyHoveredSpellbookSlotVM = null;
@@ -41,73 +47,138 @@ namespace QuickCast
                             }
                         }
                     }
-                    // If it's not a spell slot, or state is false but it wasn't the stored one, do nothing.
+                    // 如果它不是法术槽，或者状态为 false 但它不是存储的那个，则不执行任何操作。
                 }
                 else
                 {
-                    // If QC mode is not active or spellbook is not active, ensure the hover reference is cleared.
+                    // 如果QC模式未激活或法术书未激活，确保清除悬停引用。
                     if (CurrentlyHoveredSpellbookSlotVM != null)
                     {
-                       // Main.Log("[Patch Hover] Clearing hover reference due to inactive state.");
-                       CurrentlyHoveredSpellbookSlotVM = null;
+                        // Main.Log("[Patch Hover] Clearing hover reference due to inactive state.");
+                        CurrentlyHoveredSpellbookSlotVM = null;
                     }
                 }
             }
         }
-        
-        // Added Prefix patch for MechanicActionBarSlotSpell.OnClick
-        [HarmonyPatch(typeof(MechanicActionBarSlotSpell), nameof(MechanicActionBarSlotSpell.OnClick))]
-        static class MechanicActionBarSlotSpell_OnClick_Prefix_Patch
-        {
-            static bool Prefix(MechanicActionBarSlotSpell __instance) 
-            {
-                bool isRecentlyBoundByMod = ActionBarManager.RecentlyBoundSlotHashes.Contains(__instance.GetHashCode()) && 
-                                            Time.frameCount == ActionBarManager.FrameOfLastBindingRefresh;
 
-                Main.Log($"[Patch MechClickPrefix] Triggered for spell: {__instance.Spell?.Name}. Hash: {__instance.GetHashCode()}. IsRecentlyBound: {isRecentlyBoundByMod} (Frame: {Time.frameCount}, LastBindFrame: {ActionBarManager.FrameOfLastBindingRefresh})");
-
-                if (Main.CurrentlyHoveredSpellbookSlotVM != null && Main.CurrentlyHoveredSpellbookSlotVM.MechanicActionBarSlot == __instance)
-                {
-                    Main.Log($"[Patch MechClickPrefix] Clicked instance is the currently hovered spellbook slot: {__instance.Spell?.Name}. This is likely a click IN THE SPELLBOOK.");
-                }
-
-                if (isRecentlyBoundByMod)
-                {
-                    Main.Log($"[Patch MechClickPrefix] Suppressing OnClick for {__instance.Spell?.Name} (Hash: {__instance.GetHashCode()}) because it was recently bound by QuickCast this frame.");
-                    return false; 
-                }
-                Main.Log($"[Patch MechClickPrefix] Proceeding with original OnClick for {__instance.Spell?.Name} (Hash: {__instance.GetHashCode()}).");
-                return true; 
-            }
-        }
-
-        // NEW PATCH for ActionBarSlotVM.OnMainClick
+        // ActionBarSlotVM.OnMainClick 的新补丁
         [HarmonyPatch(typeof(ActionBarSlotVM), nameof(ActionBarSlotVM.OnMainClick))]
         static class ActionBarSlotVM_OnMainClick_Prefix_Patch
         {
             static bool Prefix(ActionBarSlotVM __instance)
             {
-                // Check if the slot content is our custom QuickCast spell slot
+                // 检查槽位内容是否是我们的自定义 QuickCast 法术槽
                 if (__instance.MechanicActionBarSlot is QuickCastMechanicActionBarSlotSpell qcSpellSlot)
                 {
                     bool isRecentlyBoundByMod = ActionBarManager.RecentlyBoundSlotHashes.Contains(qcSpellSlot.GetHashCode()) &&
                                                 Time.frameCount == ActionBarManager.FrameOfLastBindingRefresh;
-                    
-                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick triggered for slot with QC Spell: {qcSpellSlot.Spell?.Name}. Hash: {qcSpellSlot.GetHashCode()}. IsRecentlyBound: {isRecentlyBoundByMod} (Frame: {Time.frameCount}, LastBindFrame: {ActionBarManager.FrameOfLastBindingRefresh})");
+
+                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有QC法术的槽位触发：{qcSpellSlot.Spell?.Name}。哈希值：{qcSpellSlot.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
 
                     if (isRecentlyBoundByMod)
                     {
-                        Main.Log($"[Patch VMClickPrefix] Suppressing ActionBarSlotVM.OnMainClick for QC Spell {qcSpellSlot.Spell?.Name} (Hash: {qcSpellSlot.GetHashCode()}) because it was recently bound by QuickCast this frame.");
-                        return false; // Suppress original OnMainClick
+                        Main.Log($"[Patch VMClickPrefix] 禁止 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick，因为它在此帧被 QuickCast 最近绑定。测试");
+                        return false; // 禁止原始 OnMainClick
                     }
-                    Main.Log($"[Patch VMClickPrefix] Proceeding with ActionBarSlotVM.OnMainClick for QC Spell {qcSpellSlot.Spell?.Name} (Hash: {qcSpellSlot.GetHashCode()}).");
+                    Main.Log($"[Patch VMClickPrefix] 继续执行 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick。");
                 }
                 else
                 {
-                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick triggered for slot with non-QC content type: {__instance.MechanicActionBarSlot?.GetType().Name}. Proceeding.");
+                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有非QC内容类型的槽位触发：{__instance.MechanicActionBarSlot?.GetType().Name}。继续执行。");
                 }
-                return true; // Proceed with original OnMainClick for other slot types or if not recently bound
+                return true; // 对于其他槽位类型或如果不是最近绑定的，则继续执行原始 OnMainClick
             }
         }
+        #endregion
+
+        #region MechanicActionBarSlotSpell 补丁 (点击控制)
+        // 为 MechanicActionBarSlotSpell.OnClick 添加的前缀补丁
+        [HarmonyPatch(typeof(MechanicActionBarSlotSpell), nameof(MechanicActionBarSlotSpell.OnClick))]
+        static class MechanicActionBarSlotSpell_OnClick_Prefix_Patch
+        {
+            static bool Prefix(MechanicActionBarSlotSpell __instance)
+            {
+                bool isRecentlyBoundByMod = ActionBarManager.RecentlyBoundSlotHashes.Contains(__instance.GetHashCode()) &&
+                                            Time.frameCount == ActionBarManager.FrameOfLastBindingRefresh;
+
+                Main.Log($"[Patch MechClickPrefix] 为法术触发：{__instance.Spell?.Name}。哈希值：{__instance.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
+
+                if (Main.CurrentlyHoveredSpellbookSlotVM != null && Main.CurrentlyHoveredSpellbookSlotVM.MechanicActionBarSlot == __instance)
+                {
+                    Main.Log($"[Patch MechClickPrefix] 点击的实例是当前悬停的法术书槽位：{__instance.Spell?.Name}。这很可能是在法术书中点击。");
+                }
+
+                if (isRecentlyBoundByMod)
+                {
+                    Main.Log($"[Patch MechClickPrefix] 禁止 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的 OnClick，因为它在此帧被 QuickCast 最近绑定。");
+                    return false;
+                }
+                Main.Log($"[Patch MechClickPrefix] 继续执行 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的原始 OnClick。");
+                return true;
+            }
+        }
+        #endregion
     }
+
+    /*
+    #region ActionBarPCView 补丁 (视图生命周期管理)
+    // 这个补丁类的作用是捕获 ActionBarPCView 实例的创建和销毁，
+    // 以便Mod可以缓存其实例，用于后续操作（如访问m_SpellsGroup）。
+    public static class ActionBarPCView_Patches
+    {
+        // 当 ActionBarPCView.BindViewImplementation 执行后调用此方法
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarPCView), "BindViewImplementation")] // 目标方法
+        [HarmonyPrefix] // 添加一个前缀补丁用于调试
+        public static void BindViewImplementation_Prefix_DEBUG(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarPCView __instance)
+        {
+            Main.Log("DEBUG: ActionBarPCView.BindViewImplementation --- PREFIX --- TRIGGERED");
+            // 可以在这里设置一个断点或记录更多信息，如 __instance 是否为 null
+            if (__instance == null)
+            {
+                Main.Log("DEBUG: ActionBarPCView.BindViewImplementation --- PREFIX --- __instance IS NULL!");
+            }
+            else
+            {
+                Main.Log($"DEBUG: ActionBarPCView.BindViewImplementation --- PREFIX --- __instance is valid: {__instance.gameObject.name}");
+            }
+        }
+
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarPCView), "BindViewImplementation")] // 目标方法
+        [HarmonyPostfix] // 在原方法执行后执行
+        public static void BindViewImplementation_Postfix(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarPCView __instance) // __instance 是 ActionBarPCView 的实例
+        {
+            Main.Log("ActionBarPCView_BindViewImplementation_Postfix: ActionBarPCView 实例已捕获。");
+            if (__instance == null)
+            {
+                 Main.Log("ActionBarPCView_BindViewImplementation_Postfix: __instance IS NULL! Cannot cache.");
+            }
+            else
+            {
+                Main.CachedActionBarPCView = __instance; // 缓存实例
+                Main.Log($"ActionBarPCView_BindViewImplementation_Postfix: Cached __instance: {__instance.gameObject.name}");
+            }
+        }
+
+        // 当 ActionBarPCView (或其基类 ActionBarBaseView) 的 DestroyViewImplementation 执行后调用此方法
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarBaseView), "DestroyViewImplementation")]
+        [HarmonyPrefix] // 添加一个前缀补丁用于调试
+        public static void DestroyViewImplementation_Prefix_DEBUG()
+        {
+            Main.Log("DEBUG: ActionBarBaseView.DestroyViewImplementation --- PREFIX --- TRIGGERED");
+        }
+
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarBaseView), "DestroyViewImplementation")]
+        [HarmonyPostfix]
+        public static void DestroyViewImplementation_Postfix()
+        {
+            Main.Log("ActionBarPCView_DestroyViewImplementation_Postfix: ActionBarPCView 实例已清除。");
+            if (Main.CachedActionBarPCView != null)
+            {
+                Main.Log($"ActionBarPCView_DestroyViewImplementation_Postfix: Clearing cached view: {Main.CachedActionBarPCView.gameObject.name}");
+            }
+            Main.CachedActionBarPCView = null; // 清除缓存
+        }
+    }
+    #endregion
+    */
 } 

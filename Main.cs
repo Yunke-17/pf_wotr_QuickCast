@@ -2,205 +2,160 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection; // Added for FieldInfo
+using System.Reflection; // 为 FieldInfo 添加
 using System.Text;
 using System.Threading.Tasks;
-using UnityEngine; // Required for Input class
+using UnityEngine; // Input 类需要
 using UnityModManagerNet;
-using Kingmaker.PubSubSystem; // Added for EventBus and ILogMessageUIHandler
-using Kingmaker; // Added for Game
-using Kingmaker.UI.MVVM._VM.ActionBar; // Added for ActionBarVM, SelectorType
-using Kingmaker.UI.MVVM._VM.InGame; // Added for InGameVM, InGameStaticPartVM
-using Kingmaker.GameModes; // Added for GameModeType
-using Kingmaker.UnitLogic; // Added for Spellbook access
-using Kingmaker.EntitySystem.Entities; // Added for UnitEntityData
-using Kingmaker.UI.MVVM._PCView.ActionBar; // Added for ActionBarPCView
-using Kingmaker.UnitLogic.Abilities; // For AbilityData
-using Kingmaker.UI.UnitSettings; // Added for MechanicActionBarSlotSpell
-using Owlcat.Runtime.UI.Controls.Button; // Added for OwlcatMultiButton
-using Kingmaker.UI.MVVM; // Added for ViewBase
-using UniRx; // Corrected UniRx namespace
+using Kingmaker.PubSubSystem; // 为 EventBus 和 ILogMessageUIHandler 添加
+using Kingmaker; // 为 Game 添加
+using Kingmaker.UI.MVVM._VM.ActionBar; // 为 ActionBarVM, SelectorType 添加
+using Kingmaker.UI.MVVM._VM.InGame; // 为 InGameVM, InGameStaticPartVM 添加
+using Kingmaker.GameModes; // 为 GameModeType 添加
+using Kingmaker.UnitLogic; // 用于访问 Spellbook
+using Kingmaker.EntitySystem.Entities; // 为 UnitEntityData 添加
+using Kingmaker.UI.MVVM._PCView.ActionBar; // 为 ActionBarPCView 添加
+using Kingmaker.UnitLogic.Abilities; // 用于 AbilityData
+using Kingmaker.UI.UnitSettings; // 为 MechanicActionBarSlotSpell 添加
+using Owlcat.Runtime.UI.Controls.Button; // 为 OwlcatMultiButton 添加
+using Kingmaker.UI.MVVM; // 为 ViewBase 添加
+using UniRx; // 修正 UniRx 命名空间
 
 namespace QuickCast
 {
-    public static class Main // Made static as per UMM guidelines for entry points
+    public static class Main // 根据 UMM 指南设为静态类作为入口点
     {
-        public static bool IsEnabled { get; private set; }
-        public static UnityModManager.ModEntry ModEntry { get; private set; }
-        public static Settings settings { get; private set; } // To store loaded settings
-        private static int _currentlySettingBindKeyForSlot = -1; // -1 means not setting any key
-        private static string[] _logicalSlotLabels; // For descriptive labels in UI
-        private static int _currentlySettingPageKeyForLevel = -1; // For Page Activation Key GUI
-        private static string[] _pageActivationLevelLabels; // For Page Activation Key GUI
-        private static bool _isSettingReturnKey = false; // For Return Key GUI
+        #region Mod状态与核心实例
+        public static bool IsEnabled { get; private set; } // Mod是否启用
+        public static UnityModManager.ModEntry ModEntry { get; private set; } // UMM的Mod入口实例，用于日志等
+        public static Settings Settings { get; private set; } // Mod的设置实例
+        internal static ActionBarManager _actionBarManager; // 行动栏管理器实例
+        #endregion
 
-        // For Double-Tap to Return feature
-        private static KeyCode _lastPageActivationKeyPressed = KeyCode.None;
-        private static float _lastPageActivationKeyPressTime = 0f;
-        private const float DoubleTapTimeThreshold = 0.3f; // Seconds for double tap detection
+        #region UI状态与按键设置相关字段
+        // 用于在UMM界面上设置按键时，追踪当前正在为哪个逻辑槽位设置绑定键
+        private static int _currentlySettingBindKeyForSlot = -1; // -1 表示未设置任何键
+        private static string[] _logicalSlotLabels; // 用于绑定键UI中的描述性标签
 
-        // Default key for returning to main hotbar - This is now configured in Settings
-        // private static readonly KeyCode ReturnKey = KeyCode.X;
+        // 用于在UMM界面上设置按键时，追踪当前正在为哪个法术等级设置页面激活键
+        private static int _currentlySettingPageKeyForLevel = -1;
+        private static string[] _pageActivationLevelLabels; // 用于页面激活键UI中的描述性标签
 
-        // Default Page Activation Keys (Ctrl + Key) - These are now configured in Settings
-        private static readonly Dictionary<KeyCode, int> PageActivationKeys = new Dictionary<KeyCode, int>
-        {
-            { KeyCode.Alpha1, 1 }, { KeyCode.Alpha2, 2 }, { KeyCode.Alpha3, 3 },
-            { KeyCode.Alpha4, 4 }, { KeyCode.Alpha5, 5 }, { KeyCode.Alpha6, 6 },
-            { KeyCode.Q, 7 }, { KeyCode.W, 8 }, { KeyCode.E, 9 }, { KeyCode.R, 10 }, // R for 10th level as an example
-            { KeyCode.BackQuote, 0 } // Usually ~ key (BackQuote for US layout)
-        };
+        // 用于在UMM界面上设置按键时，追踪是否正在设置返回键
+        private static bool _isSettingReturnKey = false;
+        #endregion
 
-        // Cached instance of ActionBarPCView
+        #region 双击返回功能相关字段
+        private static KeyCode _lastPageActivationKeyPressed = KeyCode.None; // 上次按下的页面激活键
+        private static float _lastPageActivationKeyPressTime = 0f; // 上次按下页面激活键的时间
+        private const float DoubleTapTimeThreshold = 0.3f; // 双击检测的时间阈值（秒）
+        #endregion
+
+        #region 游戏对象与反射缓存
+        // ActionBarPCView 的缓存实例
         public static ActionBarPCView CachedActionBarPCView { get; internal set; }
-        // Cached FieldInfo for m_SpellsGroup to avoid repeated reflection
+        // m_SpellsGroup 的缓存 FieldInfo，以避免重复反射
         private static FieldInfo _spellsGroupFieldInfo;
-
-        // Add this new field to track the previous state of spellbook UI activation
+        // 用于跟踪法术书UI激活的先前状态，以优化日志输出
         private static bool? _previousSpellbookActiveAndInteractableState = null;
 
-        private static FieldInfo _slotsListFieldInfo; // ActionBarGroupPCView.m_SlotsList
-        private static FieldInfo _mainButtonFieldInfo; // ActionBarSlotPCView.m_MainButton
-        private static PropertyInfo _viewViewModelPropertyInfo; // ViewBase<T>.ViewModel
-        private static FieldInfo _baseSlotPCViewFieldInfo; // ActionBarBaseSlotPCView.m_SlotPCView
-        internal static ActionBarManager _actionBarManager; // Changed to internal static
+        // 以下为用于在法术书界面检测鼠标悬停法术所需的反射字段缓存
+        // private static FieldInfo _slotsListFieldInfo; // ActionBarGroupPCView.m_SlotsList - 移至确保缓存中处理或直接访问
+        // private static FieldInfo _mainButtonFieldInfo; // ActionBarSlotPCView.m_MainButton -  移至确保缓存中处理或直接访问
+        // private static PropertyInfo _viewViewModelPropertyInfo; // ViewBase<T>.ViewModel - 移至确保缓存中处理或直接访问
+        // private static FieldInfo _baseSlotPCViewFieldInfo; // ActionBarBaseSlotPCView.m_SlotPCView - 移至确保缓存中处理或直接访问
 
-        // Reference to the VM hovered via patch
+        // 通过补丁更新的、当前鼠标悬停的法术书槽位VM的引用
         public static ActionBarSlotVM CurrentlyHoveredSpellbookSlotVM => QuickCastPatches.CurrentlyHoveredSpellbookSlotVM;
+        #endregion
 
+        #region 新方法：确保 ActionBarPCView 被缓存
+        private static bool EnsureCachedActionBarView()
+        {
+            if (CachedActionBarPCView == null)
+            {
+                Log("[Main] CachedActionBarPCView 为空，尝试通过 FindObjectOfType 查找...");
+                CachedActionBarPCView = UnityEngine.Object.FindObjectOfType<ActionBarPCView>();
+                if (CachedActionBarPCView != null)
+                {
+                    Log($"[Main] 成功通过 FindObjectOfType 找到并缓存了 ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
+                    if (_spellsGroupFieldInfo == null) 
+                    {
+                        try
+                        {
+                            // 假设 m_SpellsGroup 现在是 public 的 (因为 publicized DLL)
+                            _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup"); 
+                            if (_spellsGroupFieldInfo != null)
+                            {
+                                Log("[Main] 成功获取 m_SpellsGroup 的 FieldInfo (来自 publicized DLL)。");
+                            }
+                            else
+                            {
+                                Log("[Main] 警告：即使使用了 publicized DLL，也未能通过 GetField 获取 m_SpellsGroup 的 FieldInfo。将尝试反射非公开成员。");
+                                _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup", BindingFlags.NonPublic | BindingFlags.Instance);
+                                if (_spellsGroupFieldInfo != null) Log("[Main] 成功通过反射(NonPublic)获取 m_SpellsGroup 的 FieldInfo。");
+                                else Log("[Main] 错误：仍无法获取 m_SpellsGroup 的 FieldInfo。");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log($"[Main] 尝试获取 m_SpellsGroup 的 FieldInfo 时出错: {ex.Message}");
+                        }
+                    }
+                }
+                else
+                {
+                    Log("[Main] 通过 FindObjectOfType 未能找到 ActionBarPCView 实例。UI可能尚未完全加载或不存在于当前场景。");
+                    return false;
+                }
+            }
+            return CachedActionBarPCView != null;
+        }
+        #endregion
+
+        #region UMM Mod入口与生命周期回调
+        // Mod加载入口点
         public static bool Load(UnityModManager.ModEntry modEntry)
         {
-            ModEntry = modEntry;
-            IsEnabled = true;
+            ModEntry = modEntry; // 保存ModEntry实例
+            IsEnabled = true;    // Mod默认启用
 
-            // Load settings
-            settings = UnityModManager.ModSettings.Load<Settings>(modEntry); 
-            if (settings == null) 
+            Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
+            if (Settings == null) 
             {
-                settings = new Settings(); 
-                Log("Warning: Settings could not be loaded, created new instance.");
-            }
-            // Initialize labels 
-            if (_logicalSlotLabels == null || _logicalSlotLabels.Length != settings.BindKeysForLogicalSlots.Length)
-            {
-                _logicalSlotLabels = new string[settings.BindKeysForLogicalSlots.Length];
-                for (int i = 0; i < _logicalSlotLabels.Length; i++)
-                {
-                    _logicalSlotLabels[i] = $"逻辑槽位 {i + 1} 绑定键:";
-                }
-            }
-            // Initialize labels for Page Activation Keys
-            if (_pageActivationLevelLabels == null || _pageActivationLevelLabels.Length != settings.PageActivation_Keys.Length)
-            {
-                _pageActivationLevelLabels = new string[settings.PageActivation_Keys.Length];
-                for (int i = 0; i < _pageActivationLevelLabels.Length; i++)
-                {
-                    string levelDisplay = (i == 10) ? "10 (神话)" : i.ToString();
-                    if (i == 0) levelDisplay = "0 (戏法)";
-                    _pageActivationLevelLabels[i] = $"激活 {levelDisplay}环 页 (Ctrl+):";
-                }
+                Settings = new Settings(); 
+                Log("警告：无法加载设置，已创建新实例。");
             }
 
-            modEntry.OnUpdate = OnUpdate;
-            modEntry.OnToggle = OnToggle;
-            modEntry.OnGUI = OnGUI; 
-            modEntry.OnSaveGUI = OnSaveGUI; 
+            InitializeSettingLabels();
+
+            modEntry.OnUpdate = OnUpdate;     
+            modEntry.OnToggle = OnToggle;     
+            modEntry.OnGUI = OnGUI;           
+            modEntry.OnSaveGUI = OnSaveGUI;   
 
             var harmony = new Harmony(modEntry.Info.Id);
-            harmony.PatchAll(Assembly.GetExecutingAssembly()); // Apply all patches in this assembly
-            Log("Applied Harmony patches.");
+            harmony.PatchAll(Assembly.GetExecutingAssembly()); 
+            Log("已应用Harmony补丁。");
 
-            // Explicitly patch BindViewImplementation
-            try
-            {
-                var bindViewMethod = typeof(ActionBarPCView).GetMethod("BindViewImplementation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                if (bindViewMethod != null)
-                {
-                    var bindViewPostfix = typeof(ActionBarPCView_Patches).GetMethod(nameof(ActionBarPCView_Patches.BindViewImplementation_Postfix), BindingFlags.Static | BindingFlags.Public);
-                    harmony.Patch(bindViewMethod, postfix: new HarmonyMethod(bindViewPostfix));
-                    Log("Successfully patched ActionBarPCView.BindViewImplementation.");
-                }
-                else
-                {
-                    Log("Error: Could not find ActionBarPCView.BindViewImplementation method for patching.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"Exception while patching BindViewImplementation: {ex.ToString()}");
-            }
-
-            // Explicitly patch DestroyViewImplementation
-            try
-            {
-                // Corrected to ActionBarBaseView as per UMM error log
-                var destroyViewMethod = typeof(Kingmaker.UI.MVVM._PCView.ActionBar.ActionBarBaseView).GetMethod("DestroyViewImplementation", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public); 
-                if (destroyViewMethod != null)
-                {
-                    var destroyViewPostfix = typeof(ActionBarPCView_Patches).GetMethod(nameof(ActionBarPCView_Patches.DestroyViewImplementation_Postfix), BindingFlags.Static | BindingFlags.Public);
-                    harmony.Patch(destroyViewMethod, postfix: new HarmonyMethod(destroyViewPostfix));
-                    Log("Successfully patched ActionBarBaseView.DestroyViewImplementation."); 
-                }
-                else
-                {
-                    Log("Error: Could not find ActionBarBaseView.DestroyViewImplementation method for patching."); 
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"Exception while patching DestroyViewImplementation: {ex.ToString()}");
-            }
-
-            // Cache reflection for m_SpellsGroup (remains the same)
-            try
-            {
-                _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup", BindingFlags.NonPublic | BindingFlags.Instance);
-                if (_spellsGroupFieldInfo == null)
-                {
-                    Log("Error: Could not find m_SpellsGroup field in ActionBarPCView via reflection.");
-                }
-                else
-                {
-                    Log("Successfully cached FieldInfo for m_SpellsGroup.");
-                }
-            }
-            catch (Exception ex)
-            {
-                Log($"Error during reflection caching for m_SpellsGroup: {ex.Message}");
-            }
-
-            // Cache reflection info for hover detection
-            try
-            {
-                _slotsListFieldInfo = AccessTools.Field(typeof(ActionBarGroupPCView), "m_SlotsList");
-                _mainButtonFieldInfo = AccessTools.Field(typeof(ActionBarSlotPCView), "m_MainButton");
-                _viewViewModelPropertyInfo = AccessTools.Property(typeof(ActionBarSlotPCView), "ViewModel"); 
-                _baseSlotPCViewFieldInfo = AccessTools.Field(typeof(ActionBarBaseSlotPCView), "m_SlotPCView");
-
-                if (_slotsListFieldInfo == null) Log("Error caching m_SlotsList FieldInfo.");
-                if (_mainButtonFieldInfo == null) Log("Error caching m_MainButton FieldInfo.");
-                if (_viewViewModelPropertyInfo == null) Log("Error caching ViewModel PropertyInfo.");
-                if (_baseSlotPCViewFieldInfo == null) Log("Error caching m_SlotPCView FieldInfo.");
-            }
-            catch (Exception ex)
-            {
-                 Log($"Exception during hover detection reflection caching: {ex.ToString()}");
-            }
+            // CacheReflectionInfo(); // 移除：m_SpellsGroupFieldInfo 的获取移至 EnsureCachedActionBarView
+                                 // 其他反射字段如果不再需要或改为直接访问（由于publicized DLL），也可以在此移除其缓存调用
 
             _actionBarManager = new ActionBarManager(
                 ModEntry,
                 () => CachedActionBarPCView, 
-                () => _spellsGroupFieldInfo    
+                () => _spellsGroupFieldInfo 
             );
 
-            Log("QuickCast Mod Load method finished."); 
-            return true;
+            Log("QuickCast Mod Load 方法完成。");
+            return true; 
         }
 
+        // Mod启用/禁用时的回调
         private static bool OnToggle(UnityModManager.ModEntry modEntry, bool value)
         {
-            IsEnabled = value;
-            Log($"QuickCast Mod {(IsEnabled ? "Enabled" : "Disabled")}");
+            IsEnabled = value; 
+            Log($"QuickCast Mod {(IsEnabled ? "已启用" : "已禁用")}");
             if (!IsEnabled && _actionBarManager != null && _actionBarManager.IsQuickCastModeActive)
             {
                 _actionBarManager.TryDeactivateQuickCastMode(true); 
@@ -209,168 +164,266 @@ namespace QuickCast
             return true; 
         }
 
+        // 每帧更新的回调
         private static void OnUpdate(UnityModManager.ModEntry modEntry, float dt)
         {
-            if (!IsEnabled || _actionBarManager == null) return;
+            if (!IsEnabled || Game.Instance == null || Game.Instance.RootUiContext == null || Game.Instance.CurrentMode == GameModeType.None || Game.Instance.CurrentMode == GameModeType.FullScreenUi)
+            {
+                 // 如果游戏未完全加载或处于不适合操作的模式，则不执行任何操作
+                if (CachedActionBarPCView != null && (Game.Instance == null || Game.Instance.CurrentMode == GameModeType.FullScreenUi || Game.Instance.CurrentMode == GameModeType.None || Game.Instance.CurrentMode == GameModeType.FullScreenUi))
+                {
+                    // 如果已缓存但返回主菜单或加载，清除缓存以便下次重新查找
+                    Log("[Main OnUpdate] 游戏返回主菜单或加载界面，清除 CachedActionBarPCView。");
+                    CachedActionBarPCView = null;
+                    _spellsGroupFieldInfo = null; // 也清除这个，因为它依赖于视图实例
+                }
+                return; 
+            }
 
-            // Clear the recently bound slots hash set at the beginning of each new frame (if frame changed)
+            if (CachedActionBarPCView == null)
+            {
+                EnsureCachedActionBarView(); 
+            }
+           
+            if (_actionBarManager == null) return;
+
             ActionBarManager.ClearRecentlyBoundSlotsIfNewFrame();
-
-            HandleInput();
+            HandleInput(); 
         }
 
+        // UMM设置界面的绘制回调
+        private static void OnGUI(UnityModManager.ModEntry modEntry)
+        {
+            if (!IsEnabled) return; 
+            if (Settings == null) { Log("错误：设置实例为空，无法绘制GUI。"); return; }
+
+            DrawBindKeySettings();
+            GUILayout.Space(10);
+
+            DrawPageActivationKeySettings();
+            GUILayout.Space(10);
+
+            DrawReturnKeySettings();
+            GUILayout.Space(20);
+
+            DrawBehaviorSettings();
+            GUILayout.Space(20);
+
+            HandleKeyCaptureForSettings();
+        }
+
+        private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
+        {
+            Settings.Save(modEntry); 
+        }
+        #endregion
+
+        #region 初始化与准备工作
+        private static void InitializeSettingLabels()
+        {
+            if (_logicalSlotLabels == null || _logicalSlotLabels.Length != Settings.BindKeysForLogicalSlots.Length)
+            {
+                _logicalSlotLabels = new string[Settings.BindKeysForLogicalSlots.Length];
+                for (int i = 0; i < _logicalSlotLabels.Length; i++)
+                {
+                    _logicalSlotLabels[i] = $"逻辑槽位 {i + 1} 绑定键:";
+                }
+            }
+            if (_pageActivationLevelLabels == null || _pageActivationLevelLabels.Length != Settings.PageActivation_Keys.Length)
+            {
+                _pageActivationLevelLabels = new string[Settings.PageActivation_Keys.Length];
+                for (int i = 0; i < _pageActivationLevelLabels.Length; i++) 
+                {
+                    string levelDisplay = i.ToString();
+                    if (i == 0) levelDisplay = "0 (戏法)";
+                    else if (i == 10) levelDisplay = "10 (神话)";
+                    _pageActivationLevelLabels[i] = $"激活 {levelDisplay}环 页 (Ctrl+):";
+                }
+            }
+        }
+
+        // 移除 CacheReflectionInfo()，因为其主要内容已移至 EnsureCachedActionBarView
+        // 如果还有其他不依赖 ActionBarPCView 实例的反射缓存，可以保留或单独处理
+        /*
+        private static void CacheReflectionInfo()
+        {
+            try
+            {
+                // _spellsGroupFieldInfo 的获取已移至 EnsureCachedActionBarView
+
+                // _slotsListFieldInfo = AccessTools.Field(typeof(ActionBarGroupPCView), "m_SlotsList");
+                // _mainButtonFieldInfo = AccessTools.Field(typeof(ActionBarSlotPCView), "m_MainButton");
+                // _viewViewModelPropertyInfo = typeof(ActionBarSlotPCView).BaseType.GetProperty("ViewModel", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+                // _baseSlotPCViewFieldInfo = AccessTools.Field(typeof(ActionBarBaseSlotPCView), "m_SlotPCView");
+
+                // if (_slotsListFieldInfo == null) Log("缓存 m_SlotsList FieldInfo 时出错。");
+                // if (_mainButtonFieldInfo == null) Log("缓存 m_MainButton FieldInfo 时出错。");
+                // if (_viewViewModelPropertyInfo == null) Log("缓存 ViewModel PropertyInfo 时出错（检查 ActionBarSlotPCView 的基类）。");
+                // if (_baseSlotPCViewFieldInfo == null) Log("缓存 m_SlotPCView FieldInfo 时出错。");
+            }
+            catch (Exception ex)
+            {
+                Log($"缓存反射信息时出错：{ex.ToString()}");
+            }
+        }
+        */
+        #endregion
+
+        #region 输入处理 (HandleInput)
         private static void HandleInput()
         {
-            if (!IsEnabled) 
-            {
-                // ModEntry?.Logger.Log("[QC Input] Disabled, skipping HandleInput."); // Potentially too noisy
-                return;
-            }
-            if (_actionBarManager == null)
-            {
-                Log("[QC Input ERROR] _actionBarManager is NULL in HandleInput. Cannot process input.");
-                return;
-            }
-            // Log("[QC Input] HandleInput called."); // Generally too noisy
+            if (!IsEnabled || _actionBarManager == null) return;
+            // EnsureCachedActionBarView() 已经在 OnUpdate 中调用，或者在具体操作前再次检查
 
             bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-            // Log($"[QC Input] ctrlHeld: {ctrlHeld}"); // Logged further down if relevant
-
             bool noModifiers = !ctrlHeld && !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift) && !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt);
 
-            if (ctrlHeld) 
+            if (ctrlHeld)
             {
-                Log($"[QC Input DEBUG] Ctrl key is held. Checking PageActivation_Keys. Array Length: {settings.PageActivation_Keys.Length}");
-                for (int spellLevel = 0; spellLevel < settings.PageActivation_Keys.Length; spellLevel++)
-                {
-                    KeyCode pageKey = settings.PageActivation_Keys[spellLevel];
-                    Log($"[QC Input LOOP] spellLevel: {spellLevel}, Configured pageKey: {pageKey}"); 
-
-                    if (pageKey == KeyCode.None) 
-                    {
-                        // Log($"[QC Input LOOP] pageKey is None for spellLevel: {spellLevel}. Continuing."); // Optional
-                        continue; 
-                    }
-
-                    // ---- TEMPORARY DETAILED LOG FOR CTRL+1 ----
-                    if (spellLevel == 1) // Specifically for 1-ring
-                    {
-                        bool isAlpha1Down = Input.GetKeyDown(KeyCode.Alpha1);
-                        bool isConfiguredKeyAlpha1 = (pageKey == KeyCode.Alpha1);
-                        Log($"[QC Input DETAIL Lvl1] Target Ctrl+1: ConfiguredKeyForLvl1Page: {pageKey}, IsKeyCodeAlpha1DownThisFrame: {isAlpha1Down}, IsConfiguredKeyActuallyAlpha1: {isConfiguredKeyAlpha1}.");
-                    }
-                    // ---- END TEMPORARY LOG ----
-
-                    if (Input.GetKeyDown(pageKey))
-                    {
-                        Log($"[QC Input SUCCESS] Ctrl + {pageKey} (for spell level {spellLevel}) detected!");
-                        if (settings.EnableDoubleTapToReturn && 
-                            _actionBarManager.IsQuickCastModeActive &&
-                            _actionBarManager.ActiveQuickCastPage == spellLevel && 
-                            pageKey == _lastPageActivationKeyPressed && 
-                            (Time.time - _lastPageActivationKeyPressTime) < DoubleTapTimeThreshold)
-                        {
-                            Log($"[QC Input] Double-tap detected on active page key {pageKey}. Returning to main hotbar.");
-                            _actionBarManager.TryDeactivateQuickCastMode();
-                            _lastPageActivationKeyPressed = KeyCode.None; 
-                        }
-                        else
-                        {
-                            Log($"[QC Input] Attempting to call _actionBarManager.TryActivateQuickCastPage({spellLevel})");
-                            _actionBarManager.TryActivateQuickCastPage(spellLevel);
-                            _lastPageActivationKeyPressed = pageKey; 
-                            _lastPageActivationKeyPressTime = Time.time;
-                        }
-                        return; 
-                    }
-                }
-                // If loop finishes, means Ctrl was held but no configured key was pressed *this specific frame*
-                // Log("[QC Input DEBUG] Ctrl held, but no matching PageActivation_Key was pressed down this frame.");
+                ProcessPageActivationKeys();
+                return; 
             }
-            // This 'else if' ensures that ReturnKey and BindKeys are not processed if a Ctrl+Key (Page Activation) was handled.
-            else if (_actionBarManager.IsQuickCastModeActive) 
+
+            if (_actionBarManager.IsQuickCastModeActive)
             {
-                bool spellbookUIVisible = IsSpellbookInterfaceActive(); 
-                if (_previousSpellbookActiveAndInteractableState == null || _previousSpellbookActiveAndInteractableState.Value != spellbookUIVisible)
+                if (IsSpellbookInterfaceActive() && ProcessBindingKeys())
                 {
-                    Log($"[QC Input] QC Active. Spellbook UI Visible: {spellbookUIVisible}");
-                    _previousSpellbookActiveAndInteractableState = spellbookUIVisible;
-                }
-
-                if (spellbookUIVisible)
-                {
-                    AbilityData hoveredAbility = GetHoveredAbilityInSpellBookUIActions();
-                    if (hoveredAbility != null) 
-                    {
-                        for (int i = 0; i < settings.BindKeysForLogicalSlots.Length; i++)
-                        {
-                            KeyCode configuredBindKey = settings.BindKeysForLogicalSlots[i];
-                            // Ensure BindKeys are only processed if no other modifiers are held (or define specific modifier behavior for them)
-                            if (configuredBindKey != KeyCode.None && noModifiers && Input.GetKeyDown(configuredBindKey))
-                            {
-                                Log($"[QC Input] Attempting Binding: Configured BindKey {configuredBindKey} (for Slot {i}) pressed. Hovered: {hoveredAbility.Name}. QC Page: {_actionBarManager.ActiveQuickCastPage}");
-                                _actionBarManager.BindSpellToLogicalSlot(_actionBarManager.ActiveQuickCastPage, i, hoveredAbility);
-                                return; 
-                            }
-                        }
-                    }
-                }
-
-                // Native Cast Key presses for spell casting (typically Alpha1-6, etc.)
-                // These should also ideally only trigger if no other major modifiers are held, or be specifically Ctrl/Shift/Alt aware if designed so.
-                if (noModifiers) // Added noModifiers check for casting as well for consistency
-                {
-                    foreach (var kvpMapping in _actionBarManager.GetCastKeyToSlotMapping()) 
-                    {
-                        KeyCode nativeCastKey = kvpMapping.Key; 
-                        if (Input.GetKeyDown(nativeCastKey))
-                        {
-                            Log($"[QC Input] Native CastKey {nativeCastKey} pressed. Attempting to CAST spell from QuickCast page {_actionBarManager.ActiveQuickCastPage}.");
-                            _actionBarManager.AttemptToCastBoundSpell(nativeCastKey);
-                            return; 
-                        }
-                    }
+                    return; 
                 }
             }
 
-            // ReturnKey: Process if no other modifiers are held typically, or if it's specifically designed for combos.
-            // For simplicity, checking noModifiers alongside the actual ReturnKey.
-            if (settings.ReturnToMainKey != KeyCode.None && noModifiers && Input.GetKeyDown(settings.ReturnToMainKey)) 
+            if (noModifiers && ProcessReturnKey())
             {
-                if (_actionBarManager.IsQuickCastModeActive)
+                return; 
+            }
+        }
+
+        private static void ProcessPageActivationKeys()
+        {
+            // 在尝试任何操作之前，确保视图已加载并缓存
+            if (!EnsureCachedActionBarView() || CachedActionBarPCView == null) 
+            {
+                Log("[Main ProcessPageActivationKeys] ActionBarPCView 尚未成功缓存，跳过页面激活处理。");
+                return;
+            }
+
+            for (int spellLevel = 0; spellLevel < Settings.PageActivation_Keys.Length; spellLevel++)
+            {
+                KeyCode pageKey = Settings.PageActivation_Keys[spellLevel];
+                if (pageKey == KeyCode.None) continue;
+
+                if (Input.GetKeyDown(pageKey))
                 {
-                    _actionBarManager.TryDeactivateQuickCastMode();
-                    _previousSpellbookActiveAndInteractableState = null; 
+                    Log($"[QC Input SUCCESS] Ctrl + {pageKey} (对应法术等级 {spellLevel}) 已检测到！");
+                    if (Settings.EnableDoubleTapToReturn &&
+                        _actionBarManager.IsQuickCastModeActive &&
+                        _actionBarManager.ActiveQuickCastPage == spellLevel &&
+                        pageKey == _lastPageActivationKeyPressed &&
+                        (Time.time - _lastPageActivationKeyPressTime) < DoubleTapTimeThreshold)
+                    {
+                        Log($"[QC Input] 在活动页面键 {pageKey} 上检测到双击。返回主快捷栏。");
+                        _actionBarManager.TryDeactivateQuickCastMode();
+                        _lastPageActivationKeyPressed = KeyCode.None; 
+                    }
+                    else 
+                    {
+                        Log($"[QC Input] 尝试调用 _actionBarManager.TryActivateQuickCastPage({spellLevel})");
+                        _actionBarManager.TryActivateQuickCastPage(spellLevel);
+                        _lastPageActivationKeyPressed = pageKey; 
+                        _lastPageActivationKeyPressTime = Time.time;
+                    }
                     return; 
                 }
             }
         }
 
-        // Helper to check if the ActionBar's spellbook part is likely active and interactable
-        internal static bool IsSpellbookInterfaceActive() 
+        private static bool ProcessBindingKeys()
         {
+            // 确保视图已缓存，因为 GetHoveredAbilityInSpellBookUIActions 可能间接依赖它
+            if (CachedActionBarPCView == null && !EnsureCachedActionBarView()) {
+                 Log("[Main ProcessBindingKeys] ActionBarPCView 尚未成功缓存，跳过绑定处理。");
+                return false;
+            }
+
+            AbilityData hoveredAbility = GetHoveredAbilityInSpellBookUIActions();
+            if (hoveredAbility == null) return false; 
+
+            bool noModifiers = !Input.GetKey(KeyCode.LeftControl) && !Input.GetKey(KeyCode.RightControl) &&
+                               !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift) &&
+                               !Input.GetKey(KeyCode.LeftAlt) && !Input.GetKey(KeyCode.RightAlt);
+            if (!noModifiers) return false; 
+
+            for (int i = 0; i < Settings.BindKeysForLogicalSlots.Length; i++)
+            {
+                KeyCode configuredBindKey = Settings.BindKeysForLogicalSlots[i];
+                if (configuredBindKey != KeyCode.None && Input.GetKeyDown(configuredBindKey))
+                {
+                    Log($"[QC Input] 尝试绑定：配置的绑定键 {configuredBindKey} (用于槽位 {i}) 已按下。悬停：{hoveredAbility.Name}。QC 页面：{_actionBarManager.ActiveQuickCastPage}");
+                    _actionBarManager.BindSpellToLogicalSlot(_actionBarManager.ActiveQuickCastPage, i, hoveredAbility);
+                    return true; 
+                }
+            }
+            return false;
+        }
+
+        private static bool ProcessReturnKey()
+        {
+            if (_actionBarManager.IsQuickCastModeActive &&
+                Settings.ReturnToMainKey != KeyCode.None &&
+                Input.GetKeyDown(Settings.ReturnToMainKey))
+            {
+                Log($"[QC Input] 返回键 {Settings.ReturnToMainKey} 按下。停用快捷施法模式。");
+                _actionBarManager.TryDeactivateQuickCastMode();
+                _previousSpellbookActiveAndInteractableState = null; 
+                _lastPageActivationKeyPressed = KeyCode.None; 
+                return true;
+            }
+            return false;
+        }
+        #endregion
+
+        #region UI与游戏状态辅助方法
+        internal static bool IsSpellbookInterfaceActive()
+        {
+            // 确保视图已缓存，因为此方法依赖于 _spellsGroupFieldInfo 和 CachedActionBarPCView
+            if (CachedActionBarPCView == null && !EnsureCachedActionBarView()) {
+                // Log("[Main IsSpellbookInterfaceActive] ActionBarPCView 尚未成功缓存。"); // 减少重复日志
+                return false;
+            } 
             if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null) return false;
+
             try
             {
                 var spellsGroupView = _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
-                return spellsGroupView != null && spellsGroupView.gameObject.activeInHierarchy;
+                bool isActive = spellsGroupView != null && spellsGroupView.gameObject.activeInHierarchy;
+
+                if (_previousSpellbookActiveAndInteractableState == null || _previousSpellbookActiveAndInteractableState.Value != isActive)
+                {
+                    Log($"[QC IsSpellbookInterfaceActive] 法术书UI是否可见：{isActive}");
+                    _previousSpellbookActiveAndInteractableState = isActive;
+                }
+                return isActive;
             }
             catch (Exception ex)
             {
-                Log($"Error checking IsSpellbookInterfaceActive: {ex.Message}");
+                Log($"检查 IsSpellbookInterfaceActive 时出错：{ex.Message}");
+                _previousSpellbookActiveAndInteractableState = false; 
                 return false;
             }
         }
 
         private static AbilityData GetHoveredAbilityInSpellBookUIActions()
         {
+            // 确保视图已缓存
+            if (CachedActionBarPCView == null && !EnsureCachedActionBarView()) {
+                // Log("[Main GetHoveredAbilityInSpellBookUIActions] ActionBarPCView 尚未成功缓存。"); // 减少重复日志
+                return null;
+            }
+
             var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             var hoveredVM = CurrentlyHoveredSpellbookSlotVM; 
 
-            if (actionBarVM == null || hoveredVM == null)
-            {
-                return null;
-            }
+            if (actionBarVM == null || hoveredVM == null) return null;
 
             if (hoveredVM.SpellLevel == actionBarVM.CurrentSpellLevel.Value)
             {
@@ -379,76 +432,46 @@ namespace QuickCast
                     return gameSpellSlot.Spell;
                 }
             }
-            
-            return null; 
+            return null;
         }
+        #endregion
 
-        // Helper to get the spellbook group view instance
-        private static ActionBarGroupPCView GetSpellbookGroupView()
+        #region UMM设置界面绘制逻辑 (OnGUI Helpers)
+        private static void DrawBindKeySettings()
         {
-             if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null) return null;
-             try
-             {
-                 return _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
-             }
-             catch (Exception ex)
-             {
-                  Log($"Error getting SpellbookGroupView: {ex.Message}");
-                  return null;
-             }
-        }
-
-        private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
-        {
-            settings.Save(modEntry);
-        }
-
-        private static void OnGUI(UnityModManager.ModEntry modEntry)
-        {
-            if (!IsEnabled) return; 
-            if (settings == null) { /* ... error handling ... */ return; }
-
-            // --- Bind Key Settings --- 
             GUILayout.Label("绑定键配置 (Bind Key Settings for Logical Slots):", GUILayout.ExpandWidth(false));
             GUILayout.Space(5);
-            if (settings.BindKeysForLogicalSlots != null && _logicalSlotLabels != null)
+            if (Settings.BindKeysForLogicalSlots != null && _logicalSlotLabels != null)
             {
-                for (int i = 0; i < settings.BindKeysForLogicalSlots.Length; i++)
+                for (int i = 0; i < Settings.BindKeysForLogicalSlots.Length; i++)
                 {
                     GUILayout.BeginHorizontal();
-                    GUILayout.Label(_logicalSlotLabels[i], GUILayout.Width(200)); 
-
-                    string currentKeyDisplay = (_currentlySettingBindKeyForSlot == i)
-                        ? "请按键..."
-                        : settings.BindKeysForLogicalSlots[i].ToString();
+                    GUILayout.Label(_logicalSlotLabels[i], GUILayout.Width(200));
+                    string currentKeyDisplay = (_currentlySettingBindKeyForSlot == i) ? "请按键..." : Settings.BindKeysForLogicalSlots[i].ToString();
                     GUILayout.Label(currentKeyDisplay, GUILayout.Width(120));
-
                     if (GUILayout.Button("设置", GUILayout.Width(60)))
                     {
-                        _isSettingReturnKey = false; // Cancel other key settings
+                        _isSettingReturnKey = false;
                         _currentlySettingPageKeyForLevel = -1;
-                        _currentlySettingBindKeyForSlot = (_currentlySettingBindKeyForSlot == i) ? -1 : i;
+                        _currentlySettingBindKeyForSlot = (_currentlySettingBindKeyForSlot == i) ? -1 : i; 
                     }
                     GUILayout.EndHorizontal();
                 }
             }
-            GUILayout.Space(10);
+        }
 
-            // --- Page Activation Key Settings --- 
+        private static void DrawPageActivationKeySettings()
+        {
             GUILayout.Label("页面激活键配置 (Page Activation Keys - Ctrl + YourKey):", GUILayout.ExpandWidth(false));
             GUILayout.Space(5);
-            if (settings.PageActivation_Keys != null && _pageActivationLevelLabels != null)
+            if (Settings.PageActivation_Keys != null && _pageActivationLevelLabels != null)
             {
-                for (int i = 0; i < settings.PageActivation_Keys.Length; i++) // 0-10 for spell levels
+                for (int i = 0; i < Settings.PageActivation_Keys.Length; i++)
                 {
                     GUILayout.BeginHorizontal();
                     GUILayout.Label(_pageActivationLevelLabels[i], GUILayout.Width(200));
-
-                    string currentKeyDisplay = (_currentlySettingPageKeyForLevel == i)
-                        ? "请按键..."
-                        : settings.PageActivation_Keys[i].ToString();
+                    string currentKeyDisplay = (_currentlySettingPageKeyForLevel == i) ? "请按键..." : Settings.PageActivation_Keys[i].ToString();
                     GUILayout.Label(currentKeyDisplay, GUILayout.Width(120));
-
                     if (GUILayout.Button("设置", GUILayout.Width(60)))
                     {
                         _isSettingReturnKey = false;
@@ -458,14 +481,15 @@ namespace QuickCast
                     GUILayout.EndHorizontal();
                 }
             }
-            GUILayout.Space(10);
+        }
 
-            // --- Return Key Setting --- 
+        private static void DrawReturnKeySettings()
+        {
             GUILayout.Label("返回主快捷栏键配置 (Return to Main Hotbar Key):", GUILayout.ExpandWidth(false));
             GUILayout.Space(5);
             GUILayout.BeginHorizontal();
             GUILayout.Label("返回键:", GUILayout.Width(200));
-            string returnKeyDisplay = _isSettingReturnKey ? "请按键..." : settings.ReturnToMainKey.ToString();
+            string returnKeyDisplay = _isSettingReturnKey ? "请按键..." : Settings.ReturnToMainKey.ToString();
             GUILayout.Label(returnKeyDisplay, GUILayout.Width(120));
             if (GUILayout.Button("设置", GUILayout.Width(60)))
             {
@@ -474,131 +498,68 @@ namespace QuickCast
                 _isSettingReturnKey = !_isSettingReturnKey;
             }
             GUILayout.EndHorizontal();
-            GUILayout.Space(20);
-
-            // --- Behavior Settings --- 
+        }
+        
+        private static void DrawBehaviorSettings()
+        {
             GUILayout.Label("行为设置 (Behavior Settings):", GUILayout.ExpandWidth(false));
             GUILayout.Space(5);
-
-            settings.EnableDoubleTapToReturn = GUILayout.Toggle(settings.EnableDoubleTapToReturn, "允许双击页面激活键返回主快捷栏 (Enable Double-Tap Page Activation Key to Return)");
-            settings.AutoReturnAfterCast = GUILayout.Toggle(settings.AutoReturnAfterCast, "施法启动后自动返回主快捷栏 (Auto Return to Main Hotbar After Initiating Spellcast)");
-            
-            GUILayout.Space(20);
-
-            // --- Key Capture Logic --- 
-            if (_currentlySettingBindKeyForSlot != -1 || _currentlySettingPageKeyForLevel != -1 || _isSettingReturnKey)
-            {
-                string settingWhichKey = "";
-                if (_currentlySettingBindKeyForSlot != -1) settingWhichKey = _logicalSlotLabels[_currentlySettingBindKeyForSlot];
-                else if (_currentlySettingPageKeyForLevel != -1) settingWhichKey = _pageActivationLevelLabels[_currentlySettingPageKeyForLevel];
-                else if (_isSettingReturnKey) settingWhichKey = "返回键";
-                
-                GUILayout.Label($"正在为 [{settingWhichKey}] 设置按键。按Esc取消。", GUILayout.ExpandWidth(true));
-                
-                Event e = Event.current;
-                if (e.isKey && e.type == EventType.KeyDown)
-                {
-                    if (e.keyCode == KeyCode.Escape)
-                    {
-                        _currentlySettingBindKeyForSlot = -1; 
-                        _currentlySettingPageKeyForLevel = -1;
-                        _isSettingReturnKey = false;
-                        e.Use(); 
-                    }
-                    else if (e.keyCode != KeyCode.None) // Allow any key except None
-                    {
-                        if (_currentlySettingBindKeyForSlot != -1)
-                        {
-                            settings.BindKeysForLogicalSlots[_currentlySettingBindKeyForSlot] = e.keyCode;
-                            _currentlySettingBindKeyForSlot = -1;
-                        }
-                        else if (_currentlySettingPageKeyForLevel != -1)
-                        {
-                            settings.PageActivation_Keys[_currentlySettingPageKeyForLevel] = e.keyCode;
-                            _currentlySettingPageKeyForLevel = -1;
-                        }
-                        else if (_isSettingReturnKey)
-                        {
-                            settings.ReturnToMainKey = e.keyCode;
-                            _isSettingReturnKey = false;
-                        }
-                        // settings.SetChanged(); // UMM handles saving via OnSaveGUI
-                        e.Use(); 
-                    }
-                }
-            }
+            Settings.EnableDoubleTapToReturn = GUILayout.Toggle(Settings.EnableDoubleTapToReturn, "允许双击页面激活键返回主快捷栏");
+            Settings.AutoReturnAfterCast = GUILayout.Toggle(Settings.AutoReturnAfterCast, "施法启动后自动返回主快捷栏");
         }
 
+
+        private static void HandleKeyCaptureForSettings()
+        {
+            if (!(_currentlySettingBindKeyForSlot != -1 || _currentlySettingPageKeyForLevel != -1 || _isSettingReturnKey))
+            {
+                return; 
+            }
+
+            string settingWhichKeyLabel = "";
+            if (_currentlySettingBindKeyForSlot != -1) settingWhichKeyLabel = _logicalSlotLabels[_currentlySettingBindKeyForSlot];
+            else if (_currentlySettingPageKeyForLevel != -1) settingWhichKeyLabel = _pageActivationLevelLabels[_currentlySettingPageKeyForLevel];
+            else if (_isSettingReturnKey) settingWhichKeyLabel = "返回键";
+
+            GUILayout.Label($"正在为 [{settingWhichKeyLabel.TrimEnd(':')}] 设置按键。按Esc取消。", GUILayout.ExpandWidth(true));
+
+            Event e = Event.current; 
+            if (e.isKey && e.type == EventType.KeyDown) 
+            {
+                if (e.keyCode == KeyCode.Escape) 
+                {
+                    _currentlySettingBindKeyForSlot = -1;
+                    _currentlySettingPageKeyForLevel = -1;
+                    _isSettingReturnKey = false;
+                }
+                else if (e.keyCode != KeyCode.None) 
+                {
+                    if (_currentlySettingBindKeyForSlot != -1)
+                    {
+                        Settings.BindKeysForLogicalSlots[_currentlySettingBindKeyForSlot] = e.keyCode;
+                        _currentlySettingBindKeyForSlot = -1; 
+                    }
+                    else if (_currentlySettingPageKeyForLevel != -1)
+                    {
+                        Settings.PageActivation_Keys[_currentlySettingPageKeyForLevel] = e.keyCode;
+                        _currentlySettingPageKeyForLevel = -1; 
+                    }
+                    else if (_isSettingReturnKey)
+                    {
+                        Settings.ReturnToMainKey = e.keyCode;
+                        _isSettingReturnKey = false; 
+                    }
+                }
+                e.Use(); 
+            }
+        }
+        #endregion
+
+        #region 日志工具
         public static void Log(string message)
         {
-            ModEntry?.Logger.Log(message);
+            ModEntry?.Logger.Log(message); 
         }
-    }
-
-    public static class ActionBarPCView_Patches 
-    {
-        public static void BindViewImplementation_Postfix(ActionBarPCView __instance)
-        {
-            Main.Log("ActionBarPCView_BindViewImplementation_Postfix: ActionBarPCView instance captured.");
-            Main.CachedActionBarPCView = __instance;
-        }
-        public static void DestroyViewImplementation_Postfix()
-        {
-             Main.Log("ActionBarPCView_DestroyViewImplementation_Postfix: ActionBarPCView instance cleared.");
-             Main.CachedActionBarPCView = null;
-        }
-    }
-
-    public class Settings : UnityModManager.ModSettings, IDrawable
-    {
-        // New setting for Bind Keys, one for each logical slot
-        // We support up to 12 logical slots for binding, corresponding to typical action bar sizes.
-        public KeyCode[] BindKeysForLogicalSlots = new KeyCode[12];
-        public KeyCode[] PageActivation_Keys = new KeyCode[11]; // For spell levels 0-10
-        public KeyCode ReturnToMainKey = KeyCode.X;
-        public bool EnableDoubleTapToReturn = false; // Default to false
-        public bool AutoReturnAfterCast = false; // Default to false
-
-        // Add a default constructor to initialize new settings
-        public Settings()
-        {
-            // Ensure BindKeysForLogicalSlots is initialized, especially if UMM creates a new instance.
-            // If it was already loaded, this might re-initialize if not handled carefully,
-            // but for newly added settings, this is a good place.
-            if (BindKeysForLogicalSlots == null || BindKeysForLogicalSlots.Length != 12)
-            {
-                BindKeysForLogicalSlots = new KeyCode[12];
-                for (int i = 0; i < BindKeysForLogicalSlots.Length; i++)
-                {
-                    // We could assign defaults like KeyCode.F1, KeyCode.F2 ... KeyCode.F12 here
-                    // For now, let's default all to KeyCode.None, meaning unbound.
-                    BindKeysForLogicalSlots[i] = KeyCode.None;
-                }
-            }
-            if (PageActivation_Keys == null || PageActivation_Keys.Length != 11)
-            {
-                PageActivation_Keys = new KeyCode[11];
-                // Defaults based on quickcast.md (Ctrl + Key)
-                PageActivation_Keys[0] = KeyCode.BackQuote; // Level 0 (BackQuote for ~)
-                PageActivation_Keys[1] = KeyCode.Alpha1;
-                PageActivation_Keys[2] = KeyCode.Alpha2;
-                PageActivation_Keys[3] = KeyCode.Alpha3;
-                PageActivation_Keys[4] = KeyCode.Alpha4;
-                PageActivation_Keys[5] = KeyCode.Alpha5;
-                PageActivation_Keys[6] = KeyCode.Alpha6;
-                PageActivation_Keys[7] = KeyCode.Q;
-                PageActivation_Keys[8] = KeyCode.W;
-                PageActivation_Keys[9] = KeyCode.E;
-                PageActivation_Keys[10] = KeyCode.R; // Level 10
-            }
-            // ReturnToMainKey is already initialized by its declaration with KeyCode.X
-        }
-
-        public override void Save(UnityModManager.ModEntry modEntry)
-        {
-            Save(this, modEntry);
-        }
-
-        public void OnChange() { /* If you have specific logic on change */ }
+        #endregion
     }
 }

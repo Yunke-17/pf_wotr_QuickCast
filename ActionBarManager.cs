@@ -20,17 +20,18 @@ namespace QuickCast
 {
     public class ActionBarManager
     {
+        #region 核心状态与字段
         private int _activeQuickCastPage = -1;
         private bool _isQuickCastModeActive = false;
 
-        // Stores the original content of the main action bar slots that were overridden by the mod
+        // 存储被Mod覆盖的主行动栏槽位的原始内容
         private readonly Dictionary<int, MechanicActionBarSlot> _mainBarOverriddenSlotsOriginalContent;
-        // Maps a cast key (e.g., KeyCode.Alpha1) to a main action bar slot index (e.g., 0)
-        // This mapping now primarily serves to link a game's native Cast Key (used for actual casting)
-        // to a Logical Slot Index (0-11) which is used internally for binding and display.
-        private readonly Dictionary<KeyCode, int> _castKeyToMainBarSlotIndexMapping;
-        // Stores the mod's spell bindings: SpellLevel -> (LogicalSlotIndex -> AbilityData)
-        public static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings { get; set; } 
+        // 新字段：存储Mod管理的主行动栏槽位索引列表
+        private readonly List<int> _mainBarManagedSlotIndices;
+
+        // 存储Mod的法术绑定: 法术等级 -> (逻辑槽位索引 -> 法术数据)
+        // TODO: 数据持久化 - 当前数据仅在运行时存在。应从UMM设置或存档中加载。
+        public static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings { get; set; }
 
         private readonly MechanicActionBarSlotEmpty _emptySlotPlaceholder;
 
@@ -38,10 +39,12 @@ namespace QuickCast
         private readonly Func<ActionBarPCView> _getActionBarPCView;
         private readonly Func<FieldInfo> _getSpellsGroupFieldInfo;
 
-        // New static fields to track recently bound slots on the main action bar
+        // 用于追踪主行动栏上最近被绑定的槽位的新静态字段
         public static readonly HashSet<int> RecentlyBoundSlotHashes = new HashSet<int>();
         public static int FrameOfLastBindingRefresh = -1;
+        #endregion
 
+        #region 构造函数与初始化
         public ActionBarManager(UnityModManager.ModEntry modEntry, Func<ActionBarPCView> getActionBarPCView, Func<FieldInfo> getSpellsGroupFieldInfo)
         {
             _modEntry = modEntry;
@@ -51,34 +54,32 @@ namespace QuickCast
             _mainBarOverriddenSlotsOriginalContent = new Dictionary<int, MechanicActionBarSlot>();
             _emptySlotPlaceholder = new MechanicActionBarSlotEmpty();
 
-            // Define which key presses correspond to which main action bar slots for quick casting
-            // Example: KeyCode.Alpha1 (key '1') maps to action bar slot 0, Alpha2 to slot 1, etc.
-            _castKeyToMainBarSlotIndexMapping = new Dictionary<KeyCode, int>
-            {
-                { KeyCode.Alpha1, 0 }, { KeyCode.Alpha2, 1 }, { KeyCode.Alpha3, 2 },
-                { KeyCode.Alpha4, 3 }, { KeyCode.Alpha5, 4 }, { KeyCode.Alpha6, 5 }
-                // We can extend this to more keys like 7,8,9,0,-,= if needed, mapping to slots 6-11
-            };
+            _mainBarManagedSlotIndices = new List<int> { 0, 1, 2, 3, 4, 5 };
+            // 如果需要管理主快捷栏上更多的槽位（例如对应按键7,8,9,0,-,=的槽位6-11），请扩展此列表。
 
-            // Initialize QuickCastBindings - for now, empty.
-            // In a real scenario, this would be loaded from a save file or UMM settings.
-            if (QuickCastBindings == null) 
+            // 初始化 QuickCastBindings - 目前为空。
+            // 在实际场景中，这将从存档文件或UMM设置中加载。
+            if (QuickCastBindings == null)
             {
-                 QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
+                QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
             }
-            // TODO: Add test data to QuickCastBindings for development if needed
-            // Example for new structure:
+            // TODO: 如果需要，可以在开发过程中向QuickCastBindings添加测试数据
+            // 新结构的示例:
             // if (!QuickCastBindings.ContainsKey(1)) QuickCastBindings[1] = new Dictionary<int, AbilityData>();
-            // QuickCastBindings[1][0] = someDummyAbilityDataForLevel1Slot0; // Slot 0 for Alpha1
+            // QuickCastBindings[1][0] = someDummyAbilityDataForLevel1Slot0; // 槽位0对应Alpha1
         }
+        #endregion
 
-        // Public static method to clear the tracking info at the start of a new frame
+        #region 公共属性与工具方法
+        /// <summary>
+        /// 如果是新的一帧，则清除用于防止在同一帧内重复处理行动栏点击的跟踪哈希集合。
+        /// </summary>
         public static void ClearRecentlyBoundSlotsIfNewFrame()
         {
             if (Time.frameCount != FrameOfLastBindingRefresh)
             {
                 RecentlyBoundSlotHashes.Clear();
-                // FrameOfLastBindingRefresh will be updated when a refresh actually happens
+                // 当刷新实际发生时，FrameOfLastBindingRefresh 会被更新
             }
         }
 
@@ -86,21 +87,23 @@ namespace QuickCast
 
         public bool IsQuickCastModeActive => _isQuickCastModeActive;
         public int ActiveQuickCastPage => _activeQuickCastPage;
+        #endregion
 
-        // Expose the mapping for Main.cs to know which keys are cast keys
-        public IReadOnlyDictionary<KeyCode, int> GetCastKeyToSlotMapping() => _castKeyToMainBarSlotIndexMapping;
+        #region 核心行动栏管理逻辑
+        // 由于施法现在由游戏处理，此方法不再被活动代码调用。
+        // public IReadOnlyDictionary<KeyCode, int> GetCastKeyToSlotMapping() => _castKeyToMainBarSlotIndexMapping;
 
         private void RestoreMainActionBarDisplay()
         {
             var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             if (actionBarVM == null || actionBarVM.Slots == null)
             {
-                Log("[ABM] Cannot restore action bar: ActionBarVM or Slots not available.");
-                _mainBarOverriddenSlotsOriginalContent.Clear(); // Clear to prevent stale data issues
+                Log("[ABM] 无法恢复行动栏：ActionBarVM 或 Slots 不可用。");
+                _mainBarOverriddenSlotsOriginalContent.Clear(); // 清除以防止陈旧数据问题
                 return;
             }
 
-            Log($"[ABM] Restoring main action bar display. {_mainBarOverriddenSlotsOriginalContent.Count} slots to restore.");
+            Log($"[ABM] 正在恢复主行动栏显示。有 {_mainBarOverriddenSlotsOriginalContent.Count} 个槽位需要恢复。");
             foreach (var entry in _mainBarOverriddenSlotsOriginalContent)
             {
                 int slotIndex = entry.Key;
@@ -112,22 +115,25 @@ namespace QuickCast
                     if (slotVM != null)
                     {
                         slotVM.SetMechanicSlot(originalContent);
-                        Log($"[ABM] Restored slot {slotIndex}.");
+                        Log($"[ABM] 已恢复槽位 {slotIndex}。");
                     }
                     else
                     {
-                        Log($"[ABM] Warning: SlotVM at index {slotIndex} is null during restore.");
+                        Log($"[ABM] 警告：恢复期间索引 {slotIndex} 处的 SlotVM 为空。");
                     }
                 }
                 else
                 {
-                    Log($"[ABM] Warning: Invalid slot index {slotIndex} during restore.");
+                    Log($"[ABM] 警告：恢复期间槽位索引 {slotIndex} 无效。");
                 }
             }
             _mainBarOverriddenSlotsOriginalContent.Clear();
         }
 
-        // New private method to refresh the main action bar based on current bindings
+        /// <summary>
+        /// 根据当前激活的快捷施法页面的绑定，刷新主行动栏的显示内容。
+        /// 此方法会遍历Mod管理的槽位，并用绑定的法术或空占位符填充它们。
+        /// </summary>
         private void RefreshMainActionBarForCurrentQuickCastPage()
         {
             if (!_isQuickCastModeActive || _activeQuickCastPage == -1) return;
@@ -137,84 +143,86 @@ namespace QuickCast
 
             if (actionBarVM == null || actionBarVM.Slots == null || currentUnit == null)
             {
-                Log("[ABM] Cannot refresh action bar: ViewModel, Slots or Unit not available.");
+                Log("[ABM] 无法刷新行动栏：ViewModel、Slots 或 Unit 不可用。");
                 return;
             }
 
             if (Time.frameCount != FrameOfLastBindingRefresh) {
                 RecentlyBoundSlotHashes.Clear();
             }
-            FrameOfLastBindingRefresh = Time.frameCount; 
+            FrameOfLastBindingRefresh = Time.frameCount;
 
-            Log($"[ABM] Refreshing main action bar for quick cast page {_activeQuickCastPage}.");
+            Log($"[ABM] 正在为快捷施法页面 {_activeQuickCastPage} 刷新主行动栏。");
             Dictionary<int, AbilityData> currentLevelBindings = null;
             if (QuickCastBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
             {
                 currentLevelBindings = bindingsForLevel;
-                Log($"[ABM RefreshDetails] Found {bindingsForLevel.Count} bindings for active page {_activeQuickCastPage}.");
+                Log($"[ABM RefreshDetails] 为活动页面 {_activeQuickCastPage} 找到 {bindingsForLevel.Count} 个绑定。");
                 foreach (var kvp in bindingsForLevel)
                 {
-                    // kvp.Key is now logicalSlotIndex, kvp.Value is AbilityData
-                    Log($"[ABM RefreshDetails]   Binding: SlotIndex {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
+                    // kvp.Key 现在是 logicalSlotIndex, kvp.Value 是 AbilityData
+                    Log($"[ABM RefreshDetails]   绑定：槽位索引 {kvp.Key}, 法术：{kvp.Value?.Name ?? "NULL"}");
                 }
             }
             else
             {
-                Log($"[ABM RefreshDetails] No bindings dictionary found for active page {_activeQuickCastPage}.");
+                Log($"[ABM RefreshDetails] 未找到活动页面 {_activeQuickCastPage} 的绑定字典。");
             }
 
-            // Iterate through the _castKeyToMainBarSlotIndexMapping to know which UI slots to update.
-            // This mapping tells us which game's native Cast Key (e.g. Alpha1) corresponds to which logical slot index (e.g. 0).
-            foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping) 
+            // 遍历 _mainBarManagedSlotIndices 以了解要更新哪些UI槽位。
+            foreach (int logicalSlotIndexToRefresh in _mainBarManagedSlotIndices) // 新循环
             {
-                // KeyCode castKey = mappingEntry.Key; // This is the game's native cast key for the slot
-                int logicalSlotIndexToRefresh = mappingEntry.Value; // This is the slot index (0, 1, 2...)
-
                 if (logicalSlotIndexToRefresh >= 0 && logicalSlotIndexToRefresh < actionBarVM.Slots.Count)
                 {
                     ActionBarSlotVM slotVM = actionBarVM.Slots[logicalSlotIndexToRefresh];
                     if (slotVM != null)
                     {
                         AbilityData boundAbility = null;
-                        // Try to get the bound ability for the current logicalSlotIndex from the currentLevelBindings
+                        // 尝试从 currentLevelBindings 中获取当前 logicalSlotIndex 的绑定法术
                         currentLevelBindings?.TryGetValue(logicalSlotIndexToRefresh, out boundAbility);
 
                         if (boundAbility != null)
                         {
                             var newSpellSlot = new QuickCastMechanicActionBarSlotSpell(boundAbility, currentUnit);
                             slotVM.SetMechanicSlot(newSpellSlot);
-                            RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode()); 
-                            Log($"[ABM] Refreshed Slot UI Index {logicalSlotIndexToRefresh} to spell: {boundAbility.Name}. Hash: {newSpellSlot.GetHashCode()}");
-                            
+                            RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode());
+                            Log($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 为法术：{boundAbility.Name}。哈希值：{newSpellSlot.GetHashCode()}。");
+
                             string iconName = slotVM.Icon.Value != null ? slotVM.Icon.Value.name : "null";
-                            string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null"; 
-                            Log($"[ABM] After SetMechanicSlot for Slot UI Index {logicalSlotIndexToRefresh}: VM reports Icon as {iconName}, Spell as {spellName}");
+                            string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null";
+                            Log($"[ABM] 为UI槽位索引 {logicalSlotIndexToRefresh} 设置 SetMechanicSlot 后：VM报告图标为 {iconName}，法术为 {spellName}");
                         }
                         else
                         {
                             slotVM.SetMechanicSlot(_emptySlotPlaceholder);
-                            Log($"[ABM] Refreshed Slot UI Index {logicalSlotIndexToRefresh} cleared (no binding for logical slot {logicalSlotIndexToRefresh} on level {_activeQuickCastPage}).");
+                            Log($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 并清空（在等级 {_activeQuickCastPage} 上，逻辑槽位 {logicalSlotIndexToRefresh} 没有绑定）。");
                         }
                     }
                 }
             }
         }
 
-        // Method to bind a spell to a specific logical slot on a given spell level page
+        /// <summary>
+        /// 将指定的法术数据绑定到给定法术等级页面的特定逻辑槽位上。
+        /// 如果快捷施法模式已激活且当前页面与绑定页面相同，则会刷新行动栏。
+        /// </summary>
+        /// <param name="spellLevel">法术等级页面 (0-10)。</param>
+        /// <param name="logicalSlotIndex">要绑定到的逻辑槽位索引 (例如，0对应主行动栏第一个受管辖的格子)。</param>
+        /// <param name="spellData">要绑定的法术数据。</param>
         public void BindSpellToLogicalSlot(int spellLevel, int logicalSlotIndex, AbilityData spellData)
         {
             if (spellData == null)
             {
-                Log($"[ABM] BindSpellToLogicalSlot: spellData is null for level {spellLevel}, slotIndex {logicalSlotIndex}. Cannot bind.");
+                Log($"[ABM] BindSpellToLogicalSlot：spellData 为空，等级 {spellLevel}，槽位索引 {logicalSlotIndex}。无法绑定。");
                 return;
             }
 
-            // Validate logicalSlotIndex (e.g., 0-11 if we support 12 slots)
-            // This check depends on how many slots _castKeyToMainBarSlotIndexMapping covers or a fixed max.
-            // For now, assuming valid if it's within typical action bar range.
-            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) // Assuming 12 slots max for now
+            // 验证 logicalSlotIndex (例如，如果我们支持12个槽位，则为0-11)
+            // 此检查取决于 _mainBarManagedSlotIndices 覆盖多少槽位或一个固定的最大值。
+            // 目前，假设在典型的行动栏范围内是有效的。
+            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) // 目前假设最多12个槽位
             {
-                Log($"[ABM] BindSpellToLogicalSlot: logicalSlotIndex {logicalSlotIndex} is out of range. Cannot bind.");
+                Log($"[ABM] BindSpellToLogicalSlot：logicalSlotIndex {logicalSlotIndex} 超出范围。无法绑定。");
                 return;
             }
 
@@ -223,19 +231,19 @@ namespace QuickCast
                 QuickCastBindings[spellLevel] = new Dictionary<int, AbilityData>();
             }
             QuickCastBindings[spellLevel][logicalSlotIndex] = spellData;
-            Log($"[ABM] Spell '{spellData.Name}' (Lvl: {spellData.SpellLevel}, From UI Lvl: {spellLevel}) bound to LogicalSlotIndex {logicalSlotIndex}.");
+            Log($"[ABM] 法术 '{spellData.Name}' (等级：{spellData.SpellLevel}, 来自UI等级：{spellLevel}) 已绑定到 LogicalSlotIndex {logicalSlotIndex}。");
 
-            Log($"[ABM BindDetails] Current Bindings for Level {spellLevel}:");
+            Log($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
             if (QuickCastBindings.TryGetValue(spellLevel, out var bindings))
             {
                 foreach (var kvp in bindings)
                 {
-                    Log($"[ABM BindDetails]   LogicalSlot: {kvp.Key}, Spell: {kvp.Value?.Name ?? "NULL"}");
+                    Log($"[ABM BindDetails]   逻辑槽位：{kvp.Key}, 法术：{kvp.Value?.Name ?? "NULL"}");
                 }
             }
             else
             {
-                Log("[ABM BindDetails]   No bindings found for this level after update.");
+                Log("[ABM BindDetails]   更新后未找到此等级的绑定。");
             }
 
             if (_isQuickCastModeActive && _activeQuickCastPage == spellLevel)
@@ -244,89 +252,93 @@ namespace QuickCast
             }
         }
 
+        /// <summary>
+        /// 尝试激活指定法术等级的快捷施法页面。
+        /// 这会保存当前主行动栏的内容，然后根据该页面的绑定刷新行动栏，并尝试打开和定位法术书UI。
+        /// </summary>
+        /// <param name="targetPageLevel">要激活的快捷施法页面等级 (0-10)。</param>
         public void TryActivateQuickCastPage(int targetPageLevel)
         {
-            Log($"[ABM] Attempting to activate quick cast page: {targetPageLevel}");
+            Log($"[ABM] 尝试激活快捷施法页面：{targetPageLevel}");
             var game = Game.Instance;
             var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             var cachedView = _getActionBarPCView();
-            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // This is already cached in Main and passed to ABM constructor
+            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // 这已在Main中缓存并传递给ABM构造函数
 
             if (cachedView == null)
             {
-                Log("[ABM TryActivate] Error: Cached ActionBarPCView is null.");
+                Log("[ABM TryActivate] 错误：缓存的 ActionBarPCView 为空。");
                 RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
             }
             if (spellsFieldInfo == null)
             {
-                Log("[ABM TryActivate] Error: spellsGroupFieldInfo (for m_SpellsGroup) is null.");
+                Log("[ABM TryActivate] 错误：spellsGroupFieldInfo (对应 m_SpellsGroup) 为空。");
                 RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
             }
             if (actionBarVM == null)
             {
-                Log("[ABM TryActivate] Error: ActionBarVM is null.");
+                Log("[ABM TryActivate] 错误：ActionBarVM 为空。");
                 RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
             }
 
             var currentUnit = actionBarVM.SelectedUnit.Value;
             if (currentUnit == null)
             {
-                Log("[ABM] No unit selected.");
+                Log("[ABM] 未选择单位。");
                 if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true);
                 else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
                 return;
             }
 
-            // If already in quick cast mode, restore the previous state
+            // 如果已处于快捷施法模式，则恢复先前的状态
             if (_isQuickCastModeActive)
             {
                 RestoreMainActionBarDisplay();
             }
-            _mainBarOverriddenSlotsOriginalContent.Clear(); // Ensure it's clean before potentially populating for the new page
+            _mainBarOverriddenSlotsOriginalContent.Clear(); // 在为新页面填充内容之前，确保它是干净的
 
-            // Save the original content of the action bar slots that QuickCast will override.
-            // This must be done AFTER any restore (if switching pages) and BEFORE RefreshMainActionBarForCurrentQuickCastPage.
+            // 保存 QuickCast 将覆盖的行动栏槽位的原始内容。
+            // 这必须在任何恢复（如果切换页面）之后和 RefreshMainActionBarForCurrentQuickCastPage 之前完成。
             var currentActionBarVMForSaving = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             if (currentActionBarVMForSaving != null)
             {
-                Log("[ABM TryActivate] Attempting to save current action bar state before override for QuickCast page.");
-                foreach (var mappingEntry in _castKeyToMainBarSlotIndexMapping)
+                Log("[ABM TryActivate] 尝试在覆盖快捷施法页面之前保存当前行动栏状态。");
+                foreach (int slotIndexToSave in _mainBarManagedSlotIndices) // 新循环
                 {
-                    int slotIndexToSave = mappingEntry.Value; // This is the UI slot index (0, 1, etc.)
                     if (slotIndexToSave >= 0 && slotIndexToSave < currentActionBarVMForSaving.Slots.Count)
                     {
                         ActionBarSlotVM slotVM = currentActionBarVMForSaving.Slots[slotIndexToSave];
                         if (slotVM != null)
                         {
-                            // Important: We need to ensure we are not saving a QuickCastMechanicActionBarSlotSpell
-                            // if, for some reason, a previous QuickCast state wasn't fully cleared.
-                            // RestoreMainActionBarDisplay should handle this, but as a safeguard:
+                            // 重要：我们需要确保我们没有保存 QuickCastMechanicActionBarSlotSpell，
+                            // 如果由于某种原因，先前的 QuickCast 状态未完全清除。
+                            // RestoreMainActionBarDisplay 应该处理这个问题，但作为安全措施：
                             if (slotVM.MechanicActionBarSlot is QuickCastMechanicActionBarSlotSpell)
                             {
-                                Log($"[ABM TryActivate WARNING] Slot {slotIndexToSave} contained a QC spell even after potential restore. This might indicate an issue. Not saving it as original.");
-                                // Optionally, try to get a more "original" state or leave it to be overwritten.
-                                // For now, we just log and it will be treated as if it was empty or had non-QC content that was already restored.
+                                Log($"[ABM TryActivate 警告] 槽位 {slotIndexToSave} 在可能的恢复后仍包含QC法术。这可能表明存在问题。不将其保存为原始内容。");
+                                // 可选地，尝试获取更"原始"的状态或让它被覆盖。
+                                // 目前，我们只记录日志，它将被视为是空的或具有已被恢复的非QC内容。
                             }
                             else
                             {
                                 _mainBarOverriddenSlotsOriginalContent[slotIndexToSave] = slotVM.MechanicActionBarSlot;
-                                Log($"[ABM TryActivate] Saved original content for slot index {slotIndexToSave}: {slotVM.MechanicActionBarSlot?.GetType().Name}");
+                                Log($"[ABM TryActivate] 已保存槽位索引 {slotIndexToSave} 的原始内容：{slotVM.MechanicActionBarSlot?.GetType().Name}");
                             }
                         }
                         else
                         {
-                            Log($"[ABM TryActivate] Cannot save original for slot index {slotIndexToSave}: SlotVM is null.");
+                            Log($"[ABM TryActivate] 无法保存槽位索引 {slotIndexToSave} 的原始内容：SlotVM 为空。");
                         }
                     }
                     else
                     {
-                        Log($"[ABM TryActivate] Cannot save original for slot index {slotIndexToSave}: Index out of bounds for {currentActionBarVMForSaving.Slots.Count} slots.");
+                        Log($"[ABM TryActivate] 无法保存槽位索引 {slotIndexToSave} 的原始内容：索引超出 {currentActionBarVMForSaving.Slots.Count} 个槽位的范围。");
                     }
                 }
             }
             else
             {
-                 Log("[ABM TryActivate] Cannot save original action bar state: currentActionBarVMForSaving is null.");
+                Log("[ABM TryActivate] 无法保存原始行动栏状态：currentActionBarVMForSaving 为空。");
             }
 
             try
@@ -335,78 +347,83 @@ namespace QuickCast
 
                 if (cachedView == null)
                 {
-                    Log("[ABM TryActivate] Error: Cached ActionBarPCView is null.");
+                    Log("[ABM TryActivate] 错误：缓存的 ActionBarPCView 为空。");
                     RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
                 if (spellsFieldInfo == null)
                 {
-                    Log("[ABM TryActivate] Error: spellsGroupFieldInfo (for m_SpellsGroup) is null.");
+                    Log("[ABM TryActivate] 错误：spellsGroupFieldInfo (对应 m_SpellsGroup) 为空。");
                     RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
                 if (actionBarVMToSetLevel == null)
                 {
-                    Log("[ABM TryActivate] Error: ActionBarVM for setting spell level is null.");
+                    Log("[ABM TryActivate] 错误：用于设置法术等级的 ActionBarVM 为空。");
                     RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
 
                 var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
                 if (spellsGroupInstance == null)
                 {
-                    Log("[ABM TryActivate] Error: Failed to get m_SpellsGroup instance from ActionBarPCView via reflection.");
+                    Log("[ABM TryActivate] 错误：通过反射从 ActionBarPCView 获取 m_SpellsGroup 实例失败。");
                     RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
                 }
 
-                Log("[ABM TryActivate] Attempting to directly call m_SpellsGroup.SetVisible(true, true).");
-                spellsGroupInstance.SetVisible(true, true); // Force visibility
-                Log("[ABM TryActivate] Called m_SpellsGroup.SetVisible(true, true).");
+                Log("[ABM TryActivate] 尝试直接调用 m_SpellsGroup.SetVisible(true, true)。");
+                spellsGroupInstance.SetVisible(true, true); // 强制可见性
+                Log("[ABM TryActivate] 已调用 m_SpellsGroup.SetVisible(true, true)。");
 
-                // Set the spell level in the ViewModel AFTER making the spell group visible
-                // because SetVisible might trigger other groups to hide and could potentially reset spell level if done before.
+                // 在使法术组可见后，在 ViewModel 中设置法术等级
+                // 因为 SetVisible 可能会触发其他组隐藏，并且如果在之前完成，可能会重置法术等级。
                 if (game.CurrentMode == GameModeType.Default ||
                     game.CurrentMode == GameModeType.TacticalCombat ||
                     game.CurrentMode == GameModeType.Pause)
                 {
-                    Log($"[ABM TryActivate] Setting CurrentSpellLevel.Value to {targetPageLevel}. Previous value: {actionBarVMToSetLevel.CurrentSpellLevel.Value}");
+                    Log($"[ABM TryActivate] 正在将 CurrentSpellLevel.Value 设置为 {targetPageLevel}。先前的值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
                     actionBarVMToSetLevel.CurrentSpellLevel.Value = targetPageLevel;
-                    Log($"[ABM TryActivate] Spell level set to {targetPageLevel} via VM. New value: {actionBarVMToSetLevel.CurrentSpellLevel.Value}");
+                    Log($"[ABM TryActivate] 法术等级已通过 VM 设置为 {targetPageLevel}。新值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
                 }
                 else
                 {
-                    Log($"[ABM TryActivate] Game not in a suitable mode ({game.CurrentMode}) to set spell level.");
+                    Log($"[ABM TryActivate] 游戏不处于适合设置法术等级的模式 ({game.CurrentMode})。");
                 }
 
                 _isQuickCastModeActive = true;
                 _activeQuickCastPage = targetPageLevel;
 
-                RefreshMainActionBarForCurrentQuickCastPage(); // New call to unified refresh logic
+                RefreshMainActionBarForCurrentQuickCastPage(); // 调用统一的刷新逻辑
 
                 string pageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
                 if (_activeQuickCastPage == 10) pageNameDisplay = "10环(神话)";
                 string message = $"快捷施法: {pageNameDisplay} 已激活";
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
-                Log($"[ABM] Internal: QuickCast Page {pageNameDisplay} Activated successfully.");
+                Log($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。");
             }
             catch (Exception ex)
             {
-                Log($"[ABM] Error during TryActivateQuickCastPage: {ex.ToString()}");
-                RestoreMainActionBarDisplay(); // Restore display on error
+                Log($"[ABM] TryActivateQuickCastPage 期间出错：{ex.ToString()}");
+                RestoreMainActionBarDisplay(); // 出错时恢复显示
                 _activeQuickCastPage = -1; _isQuickCastModeActive = false;
             }
         }
 
+        /// <summary>
+        /// 尝试停用当前的快捷施法模式。
+        /// 这会恢复主行动栏到进入快捷施法模式之前的状态，并关闭由Mod打开的法术书UI（如果适用）。
+        /// </summary>
+        /// <param name="force">如果为true，则无论当前是否处于快捷施法模式都会尝试停用（例如，在Mod禁用时）。</param>
         public void TryDeactivateQuickCastMode(bool force = false)
         {
-            Log($"[ABM] Attempting to deactivate quick cast mode. Was active: {_isQuickCastModeActive}, Force: {force}");
+            Log($"[ABM] 尝试停用快捷施法模式。先前是否激活：{_isQuickCastModeActive}，强制：{force}");
             if (!_isQuickCastModeActive && !force)
             {
-                Log($"[ABM] Not deactivating as not active and not forced.");
+                Log($"[ABM] 未激活且未强制，因此不执行停用。");
                 return;
             }
 
             RestoreMainActionBarDisplay();
 
             var cachedView = _getActionBarPCView();
-            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // This is already cached in Main and passed to ABM constructor
+            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // 这已在Main中缓存并传递给ABM构造函数
 
             if (cachedView != null && spellsFieldInfo != null)
             {
@@ -415,119 +432,44 @@ namespace QuickCast
                     var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
                     if (spellsGroupInstance != null)
                     {
-                        Log("[ABM] Calling SetVisible(false, true) on m_SpellsGroup.");
+                        Log("[ABM] 正在对 m_SpellsGroup 调用 SetVisible(false, true)。");
                         spellsGroupInstance.SetVisible(false, true);
                     }
                     else
                     {
-                        Log("[ABM] Warning: m_SpellsGroup instance is null during deactivation, cannot hide spellbook UI part.");
+                        Log("[ABM] 警告：停用期间 m_SpellsGroup 实例为空，无法隐藏法术书UI部分。");
                     }
                 }
                 catch (Exception ex)
                 {
-                     Log($"[ABM] Error hiding m_SpellsGroup: {ex.ToString()}");
+                    Log($"[ABM] 隐藏 m_SpellsGroup 时出错：{ex.ToString()}");
                 }
             }
             else
             {
-                Log("[ABM] Warning: ActionBarPCView or m_SpellsGroup FieldInfo not available for hiding spellbook UI part.");
-                // Fallback if the view/field is somehow lost, try to tell VM directly (already in existing code)
+                Log("[ABM] 警告：ActionBarPCView 或 m_SpellsGroup FieldInfo 不可用于隐藏法术书UI部分。");
+                // 如果视图/字段由于某种原因丢失，则尝试直接通知VM（已在现有代码中）
                 var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
                 if (actionBarVM != null)
                 {
                     actionBarVM.UpdateGroupState(ActionBarGroupType.Spell, false);
-                    Log("[ABM] Fallback: Called UpdateGroupState(Spell, false) on VM directly.");
+                    Log("[ABM] 回退：直接在 VM 上调用 UpdateGroupState(Spell, false)。");
                 }
             }
-            
+
             string exitedPageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
             if (_activeQuickCastPage == 10) exitedPageNameDisplay = "10环(神话)";
 
-            bool wasActuallyActive = _isQuickCastModeActive; // Capture state before reset
-                     _isQuickCastModeActive = false; 
-                    _activeQuickCastPage = -1;
+            bool wasActuallyActive = _isQuickCastModeActive; // 捕获重置前的状态
+            _isQuickCastModeActive = false;
+            _activeQuickCastPage = -1;
 
-            if (wasActuallyActive || force) { // Only log deactivation message if it was truly active or forced
-                    string message = $"快捷施法: 返回主快捷栏";
-                    EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
-                    Log($"[ABM] Internal: Returned to Main Hotbar from Page {exitedPageNameDisplay}.");
+            if (wasActuallyActive || force) { // 仅当它确实处于活动状态或被强制时才记录停用消息
+                string message = $"快捷施法: 返回主快捷栏";
+                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
+                Log($"[ABM] 内部：从页面 {exitedPageNameDisplay} 返回到主快捷栏。");
             }
         }
-
-        public void AttemptToCastBoundSpell(KeyCode castKey) // castKey is the game's native key (e.g. KeyCode.Alpha1)
-        {
-            if (!_isQuickCastModeActive || _activeQuickCastPage == -1)
-            {
-                Log($"[ABM CastAttempt] Cannot cast: QuickCast mode not active or no page selected. QC Active: {_isQuickCastModeActive}, Page: {_activeQuickCastPage}");
-                return;
-            }
-
-            // Convert the game's native castKey to its corresponding logicalSlotIndex
-            if (!_castKeyToMainBarSlotIndexMapping.TryGetValue(castKey, out int logicalSlotIndex))
-            {
-                Log($"[ABM CastAttempt] Key {castKey} is not a mapped QuickCast CastKey. Cannot determine logical slot.");
-                return; // This key isn't one of the ones QuickCast manages for casting (e.g. not Alpha1-6)
-            }
-
-            Log($"[ABM CastAttempt] Attempting to cast spell for native key {castKey} (LogicalSlot {logicalSlotIndex}) on page {_activeQuickCastPage}");
-
-            AbilityData abilityToCast = null;
-            if (QuickCastBindings.TryGetValue(_activeQuickCastPage, out var pageBindings))
-            {
-                if (pageBindings.TryGetValue(logicalSlotIndex, out var spell))
-                {
-                    abilityToCast = spell;
-                }
-            }
-
-            if (abilityToCast != null)
-            {
-                var caster = Game.Instance?.Player?.MainCharacter.Value?.Descriptor?.Unit;
-                if (caster == null)
-                {
-                    Log("[ABM CastAttempt] Caster not found, cannot cast.");
-                    return;
-                }
-
-                if (!abilityToCast.IsAvailableForCast)
-                {
-                    Log($"[ABM CastAttempt] Spell '{abilityToCast.Name}' is not available for casting (e.g., no slots, cooldown).");
-                    EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage($"无法施放: {abilityToCast.Name} (不可用)"));
-                    return;
-                }
-
-                Log($"[ABM CastAttempt] Found spell '{abilityToCast.Name}' for native key {castKey} (LogicalSlot {logicalSlotIndex}). TargetAnchor: {abilityToCast.TargetAnchor}, Range: {abilityToCast.Range}");
-
-                bool castInitiated = false;
-                if (abilityToCast.TargetAnchor == AbilityTargetAnchor.Owner || abilityToCast.Range == AbilityRange.Personal)
-                {
-                    Log($"[ABM CastAttempt] Casting self-targeted or personal range spell: {abilityToCast.Name}");
-                    caster.Commands.Run(UnitUseAbility.CreateCastCommand(abilityToCast, caster));
-                    castInitiated = true;
-                }
-                else
-                {
-                    Log($"[ABM CastAttempt] Setting ability for target selection: {abilityToCast.Name}");
-                    Game.Instance.SelectedAbilityHandler.SetAbility(abilityToCast);
-                    castInitiated = true;
-                }
-
-                // Check for Auto Return after cast initiation
-                if (castInitiated && Main.settings != null && Main.settings.AutoReturnAfterCast)
-                {
-                    Log($"[ABM CastAttempt] Auto-returning to main hotbar after initiating cast for '{abilityToCast.Name}'.");
-                    // We might want a slight delay here if it feels too jarring, but TryDeactivateQuickCastMode itself doesn't have a delay.
-                    // For now, direct call.
-                    TryDeactivateQuickCastMode(false); 
-                    // Note: If TryDeactivateQuickCastMode is called, it will also clear _lastPageActivationKeyPressed in Main.cs if we make that call from here.
-                    // However, TryDeactivateQuickCastMode doesn't know about those Main.cs static fields directly.
-                    // The _previousSpellbookActiveAndInteractableState is reset in Main.cs when TryDeactivate is called from there.
-                }
-            }
-            else
-            {
-                Log($"[ABM CastAttempt] No spell bound to native key {castKey} (LogicalSlot {logicalSlotIndex}) on page {_activeQuickCastPage}.");
-            }
-        }
+        #endregion
     }
 } 
