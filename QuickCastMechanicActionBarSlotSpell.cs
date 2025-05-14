@@ -1,3 +1,4 @@
+using System;
 using Kingmaker.EntitySystem.Entities;
 using Kingmaker.UI.UnitSettings; // 用于 MechanicActionBarSlotSpell 和基础 MechanicActionBarSlot
 using Kingmaker.UnitLogic.Abilities; // 用于 AbilityData
@@ -127,21 +128,27 @@ namespace QuickCast
         {
             Main.Log($"[QuickCastMechanicActionBarSlotSpell] OnClick triggered. Spell: {this.Spell?.Name}. Unit: {this.Unit?.CharacterName}");
             
-            // 首先，确保我们的 Spell 对象是有效的并且我们处于一个可以行动的状态
             if (this.IsBad() || !this.IsPossibleActive(null))
             {
                 Main.Log("[QuickCastMechanicActionBarSlotSpell] Conditions not met for casting (IsBad or !IsPossibleActive). Playing sound and showing warning via base.OnClick if necessary.");
-                // 即使条件不满足，也调用 base.OnClick() 来播放声音或显示警告（如果适用）
-                // MechanicActionBarSlot.OnClick() 会处理 TryShowWarning
                 base.OnClick(); 
                 return;
             }
         
-            // 直接调用基类的 OnClick 方法，让它来处理所有施法逻辑
-            // 因为我们已经通过重写 Spell 属性提供了正确的法术，
-            // 原生的 MechanicActionBarSlotSpell.OnClick() 应该能正确处理后续操作。
-            Main.Log("[QuickCastMechanicActionBarSlotSpell] Conditions met. Calling base.OnClick() to handle spell casting/targeting.");
+            // 如果启用了施法后自动返回，则标记此法术
+            if (Main.Settings != null && Main.Settings.AutoReturnAfterCast && this.Unit != null && this.Spell != null)
+            {
+                ActionBarManager.SpellCastToAutoReturn = new Tuple<UnitEntityData, BlueprintAbility>(this.Unit, this.Spell.Blueprint);
+                Main.Log($"[QuickCastMechanicActionBarSlotSpell] Marked spell {this.Spell.Name} for unit {this.Unit.CharacterName} for auto-return.");
+            }
+            else
+            {
+                // 如果没有启用自动返回，或信息不全，确保清除任何旧标记
+                ActionBarManager.SpellCastToAutoReturn = null;
+            }
+
             base.OnClick(); 
+            Main.Log("[QuickCastMechanicActionBarSlotSpell] Called base.OnClick().");
         }
 
         public override TooltipBaseTemplate GetTooltipTemplate()

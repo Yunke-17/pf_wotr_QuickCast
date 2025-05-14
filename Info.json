@@ -2,7 +2,7 @@
   "Id": "QuickCast",
   "DisplayName": "Quick Cast System",
   "Author": "ToisnaLey",
-  "Version": "0.1.0",
+  "Version": "0.1.1",
   "EntryMethod": "QuickCast.Main.Load",
   "HomePage": "",
   "Requirements": [],

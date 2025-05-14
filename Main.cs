@@ -79,28 +79,29 @@ namespace QuickCast
                 if (CachedActionBarPCView != null)
                 {
                     Log($"[Main] 成功通过 FindObjectOfType 找到并缓存了 ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
-                    if (_spellsGroupFieldInfo == null) 
+                    var currentCharacter = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter; // Changed here
+                    if (currentCharacter != null && _spellsGroupFieldInfo == null) 
                     {
                         try
                         {
-                            // 假设 m_SpellsGroup 现在是 public 的 (因为 publicized DLL)
-                            _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup"); 
+                            _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup", BindingFlags.NonPublic | BindingFlags.Instance);
                             if (_spellsGroupFieldInfo != null)
                             {
-                                Log("[Main] 成功获取 m_SpellsGroup 的 FieldInfo (来自 publicized DLL)。");
+                                Log("[Main] 成功获取 m_SpellsGroup 的 FieldInfo。");
                             }
                             else
                             {
-                                Log("[Main] 警告：即使使用了 publicized DLL，也未能通过 GetField 获取 m_SpellsGroup 的 FieldInfo。将尝试反射非公开成员。");
-                                _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup", BindingFlags.NonPublic | BindingFlags.Instance);
-                                if (_spellsGroupFieldInfo != null) Log("[Main] 成功通过反射(NonPublic)获取 m_SpellsGroup 的 FieldInfo。");
-                                else Log("[Main] 错误：仍无法获取 m_SpellsGroup 的 FieldInfo。");
+                                Log("[Main] 错误：未能获取 m_SpellsGroup 的 FieldInfo。");
                             }
                         }
                         catch (Exception ex)
                         {
                             Log($"[Main] 尝试获取 m_SpellsGroup 的 FieldInfo 时出错: {ex.Message}");
                         }
+                    }
+                    else if (currentCharacter == null)
+                    {
+                        Log("[Main] EnsureCachedActionBarView: 当前未选择角色，暂不尝试获取 m_SpellsGroup FieldInfo。");
                     }
                 }
                 else
@@ -188,7 +189,7 @@ namespace QuickCast
             if (_actionBarManager == null) return;
 
             ActionBarManager.ClearRecentlyBoundSlotsIfNewFrame();
-            HandleInput(); 
+            HandleInput();
         }
 
         // UMM设置界面的绘制回调
@@ -327,8 +328,8 @@ namespace QuickCast
                     }
                     else 
                     {
-                        Log($"[QC Input] 尝试调用 _actionBarManager.TryActivateQuickCastPage({spellLevel})");
-                        _actionBarManager.TryActivateQuickCastPage(spellLevel);
+                        Log($"[QC Input] 尝试调用 _actionBarManager.TryActivateQuickCastMode({spellLevel}, false)");
+                        _actionBarManager.TryActivateQuickCastMode(spellLevel, false);
                         _lastPageActivationKeyPressed = pageKey; 
                         _lastPageActivationKeyPressTime = Time.time;
                     }

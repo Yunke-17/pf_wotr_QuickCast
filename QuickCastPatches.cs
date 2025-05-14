@@ -1,3 +1,4 @@
+using System; // Added for Type and Tuple
 using HarmonyLib;
 using Kingmaker.UI.MVVM._VM.ActionBar;
 using Kingmaker.UnitLogic.Abilities;
@@ -118,6 +119,40 @@ namespace QuickCast
             }
         }
         #endregion
+
+        #region UnitUseAbility 补丁 (施法后自动返回)
+        [HarmonyPatch(typeof(Kingmaker.UnitLogic.Commands.UnitUseAbility), nameof(Kingmaker.UnitLogic.Commands.UnitUseAbility.OnEnded), new Type[] { typeof(bool) })]
+        static class UnitUseAbility_OnEnded_Patch
+        {
+            static void Postfix(Kingmaker.UnitLogic.Commands.UnitUseAbility __instance, bool raiseEvent)
+            {
+                if (Main.IsEnabled && Main.Settings != null && Main.Settings.AutoReturnAfterCast && 
+                    ActionBarManager.SpellCastToAutoReturn != null && 
+                    __instance.Result == Kingmaker.UnitLogic.Commands.Base.UnitCommand.ResultType.Success)
+                {
+                    var markedCaster = ActionBarManager.SpellCastToAutoReturn.Item1;
+                    var markedAbilityBlueprint = ActionBarManager.SpellCastToAutoReturn.Item2;
+
+                    if (__instance.Executor == markedCaster && __instance.Ability?.Blueprint == markedAbilityBlueprint)
+                    {
+                        Main.Log($"[UnitUseAbility_OnEnded_Patch] Spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} finished successfully. Triggering auto-return.");
+                        Main._actionBarManager?.TryDeactivateQuickCastMode(); 
+                    }
+                    ActionBarManager.SpellCastToAutoReturn = null; 
+                }
+                else if (ActionBarManager.SpellCastToAutoReturn != null && __instance.Result != Kingmaker.UnitLogic.Commands.Base.UnitCommand.ResultType.Success)
+                {
+                    var markedCaster = ActionBarManager.SpellCastToAutoReturn.Item1;
+                    var markedAbilityBlueprint = ActionBarManager.SpellCastToAutoReturn.Item2;
+                    if (__instance.Executor == markedCaster && __instance.Ability?.Blueprint == markedAbilityBlueprint)
+                    {
+                        Main.Log($"[UnitUseAbility_OnEnded_Patch] Marked spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} did not succeed ({__instance.Result}). Clearing auto-return mark.");
+                        ActionBarManager.SpellCastToAutoReturn = null;
+                    }
+                }
+            }
+        }
+        #endregion
     }
 
     /*
@@ -154,7 +189,7 @@ namespace QuickCast
             }
             else
             {
-                Main.CachedActionBarPCView = __instance; // 缓存实例
+            Main.CachedActionBarPCView = __instance; // 缓存实例
                 Main.Log($"ActionBarPCView_BindViewImplementation_Postfix: Cached __instance: {__instance.gameObject.name}");
             }
         }

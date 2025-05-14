@@ -24,14 +24,18 @@ namespace QuickCast
         private int _activeQuickCastPage = -1;
         private bool _isQuickCastModeActive = false;
 
+        // 用于施法后自动返回的标记
+        internal static Tuple<UnitEntityData, BlueprintAbility> SpellCastToAutoReturn { get; set; } = null;
+
         // 存储被Mod覆盖的主行动栏槽位的原始内容
         private readonly Dictionary<int, MechanicActionBarSlot> _mainBarOverriddenSlotsOriginalContent;
         // 新字段：存储Mod管理的主行动栏槽位索引列表
         private readonly List<int> _mainBarManagedSlotIndices;
 
-        // 存储Mod的法术绑定: 法术等级 -> (逻辑槽位索引 -> 法术数据)
-        // TODO: 数据持久化 - 当前数据仅在运行时存在。应从UMM设置或存档中加载。
-        public static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings { get; set; }
+        // 原来的静态绑定字典，现在改为按角色ID存储
+        // private static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
+        // 改为：Key: Character UniqueId (string), Value: Dictionary<int spellLevel, Dictionary<int logicalSlotIndex, AbilityData spell>>
+        private static Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>> PerCharacterQuickCastBindings = new Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>>();
 
         private readonly MechanicActionBarSlotEmpty _emptySlotPlaceholder;
 
@@ -59,9 +63,9 @@ namespace QuickCast
 
             // 初始化 QuickCastBindings - 目前为空。
             // 在实际场景中，这将从存档文件或UMM设置中加载。
-            if (QuickCastBindings == null)
+            if (PerCharacterQuickCastBindings == null)
             {
-                QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
+                PerCharacterQuickCastBindings = new Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>>();
             }
             // TODO: 如果需要，可以在开发过程中向QuickCastBindings添加测试数据
             // 新结构的示例:
@@ -153,20 +157,19 @@ namespace QuickCast
             FrameOfLastBindingRefresh = Time.frameCount;
 
             Log($"[ABM] 正在为快捷施法页面 {_activeQuickCastPage} 刷新主行动栏。");
+
+            // 获取当前角色的绑定数据
+            var currentCharacterBindings = GetCurrentCharacterBindings(false); // false: 不需要创建新条目，如果不存在则表示没有绑定
             Dictionary<int, AbilityData> currentLevelBindings = null;
-            if (QuickCastBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
+
+            if (currentCharacterBindings != null && currentCharacterBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
             {
                 currentLevelBindings = bindingsForLevel;
-                Log($"[ABM RefreshDetails] 为活动页面 {_activeQuickCastPage} 找到 {bindingsForLevel.Count} 个绑定。");
-                foreach (var kvp in bindingsForLevel)
-                {
-                    // kvp.Key 现在是 logicalSlotIndex, kvp.Value 是 AbilityData
-                    Log($"[ABM RefreshDetails]   绑定：槽位索引 {kvp.Key}, 法术：{kvp.Value?.Name ?? "NULL"}");
-                }
+                Log($"[ABM] 已找到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 等级 {_activeQuickCastPage} 的绑定数据。");
             }
             else
             {
-                Log($"[ABM RefreshDetails] 未找到活动页面 {_activeQuickCastPage} 的绑定字典。");
+                Log($"[ABM] 未找到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 等级 {_activeQuickCastPage} 的绑定数据，将显示空格子。");
             }
 
             // 遍历 _mainBarManagedSlotIndices 以了解要更新哪些UI槽位。
@@ -213,30 +216,34 @@ namespace QuickCast
         {
             if (spellData == null)
             {
-                Log($"[ABM] BindSpellToLogicalSlot：spellData 为空，等级 {spellLevel}，槽位索引 {logicalSlotIndex}。无法绑定。");
+                Log("[ABM] BindSpellToLogicalSlot：spellData 为空...无法绑定。");
                 return;
             }
-
-            // 验证 logicalSlotIndex (例如，如果我们支持12个槽位，则为0-11)
-            // 此检查取决于 _mainBarManagedSlotIndices 覆盖多少槽位或一个固定的最大值。
-            // 目前，假设在典型的行动栏范围内是有效的。
-            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) // 目前假设最多12个槽位
+            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) 
             {
                 Log($"[ABM] BindSpellToLogicalSlot：logicalSlotIndex {logicalSlotIndex} 超出范围。无法绑定。");
                 return;
             }
 
-            if (!QuickCastBindings.ContainsKey(spellLevel))
+            // 获取或创建当前角色的绑定数据
+            var currentCharacterBindings = GetCurrentCharacterBindings(true); // true: 如果角色没有绑定，则创建
+            if (currentCharacterBindings == null)
             {
-                QuickCastBindings[spellLevel] = new Dictionary<int, AbilityData>();
+                Log("[ABM] BindSpellToLogicalSlot：无法获取或创建角色绑定。可能是因为没有选中角色。绑定失败。");
+                return;
             }
-            QuickCastBindings[spellLevel][logicalSlotIndex] = spellData;
-            Log($"[ABM] 法术 '{spellData.Name}' (等级：{spellData.SpellLevel}, 来自UI等级：{spellLevel}) 已绑定到 LogicalSlotIndex {logicalSlotIndex}。");
+
+            if (!currentCharacterBindings.ContainsKey(spellLevel))
+            {
+                currentCharacterBindings[spellLevel] = new Dictionary<int, AbilityData>();
+            }
+            currentCharacterBindings[spellLevel][logicalSlotIndex] = spellData;
+            Log($"[ABM] 法术 '{spellData.Name}' 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
 
             Log($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
-            if (QuickCastBindings.TryGetValue(spellLevel, out var bindings))
+            if (GetCurrentCharacterBindings(false) != null)
             {
-                foreach (var kvp in bindings)
+                foreach (var kvp in GetCurrentCharacterBindings(false)[spellLevel])
                 {
                     Log($"[ABM BindDetails]   逻辑槽位：{kvp.Key}, 法术：{kvp.Value?.Name ?? "NULL"}");
                 }
@@ -257,9 +264,32 @@ namespace QuickCast
         /// 这会保存当前主行动栏的内容，然后根据该页面的绑定刷新行动栏，并尝试打开和定位法术书UI。
         /// </summary>
         /// <param name="targetPageLevel">要激活的快捷施法页面等级 (0-10)。</param>
-        public void TryActivateQuickCastPage(int targetPageLevel)
+        public bool TryActivateQuickCastMode(int spellLevel, bool forSpellBook)
         {
-            Log($"[ABM] 尝试激活快捷施法页面：{targetPageLevel}");
+            var selectedUnit = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter;
+            if (selectedUnit == null)
+            {
+                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage("无法激活快捷施法：未选择角色。"));
+                return false;
+            }
+
+            var spellbook = selectedUnit.Descriptor?.Spellbooks?.FirstOrDefault();
+            if (spellbook == null)
+            {
+                string noSpellbookMessage = $"角色 {selectedUnit.CharacterName} 没有法术书，无法激活快捷施法。";
+                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(noSpellbookMessage));
+                return false;
+            }
+
+            if (spellLevel > spellbook.MaxSpellLevel)
+            {
+                string spellLevelHighMessage = $"角色 {selectedUnit.CharacterName} 最高只能施放 {spellbook.MaxSpellLevel}环法术，无法打开 {spellLevel}环快捷施法。";
+                EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(spellLevelHighMessage));
+                return false;
+            }
+
+            Main.Log($"[ABM TryActivate] Mode: {(forSpellBook ? "Spellbook" : "QuickCast")}, Level: {spellLevel}");
+            Log($"[ABM] 尝试激活快捷施法页面：{spellLevel}");
             var game = Game.Instance;
             var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             var cachedView = _getActionBarPCView();
@@ -268,17 +298,17 @@ namespace QuickCast
             if (cachedView == null)
             {
                 Log("[ABM TryActivate] 错误：缓存的 ActionBarPCView 为空。");
-                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
             }
             if (spellsFieldInfo == null)
             {
                 Log("[ABM TryActivate] 错误：spellsGroupFieldInfo (对应 m_SpellsGroup) 为空。");
-                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
             }
             if (actionBarVM == null)
             {
                 Log("[ABM TryActivate] 错误：ActionBarVM 为空。");
-                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
             }
 
             var currentUnit = actionBarVM.SelectedUnit.Value;
@@ -287,7 +317,7 @@ namespace QuickCast
                 Log("[ABM] 未选择单位。");
                 if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true);
                 else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
-                return;
+                return false;
             }
 
             // 如果已处于快捷施法模式，则恢复先前的状态
@@ -348,24 +378,24 @@ namespace QuickCast
                 if (cachedView == null)
                 {
                     Log("[ABM TryActivate] 错误：缓存的 ActionBarPCView 为空。");
-                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
                 }
                 if (spellsFieldInfo == null)
                 {
                     Log("[ABM TryActivate] 错误：spellsGroupFieldInfo (对应 m_SpellsGroup) 为空。");
-                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
                 }
                 if (actionBarVMToSetLevel == null)
                 {
                     Log("[ABM TryActivate] 错误：用于设置法术等级的 ActionBarVM 为空。");
-                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
                 }
 
                 var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
                 if (spellsGroupInstance == null)
                 {
                     Log("[ABM TryActivate] 错误：通过反射从 ActionBarPCView 获取 m_SpellsGroup 实例失败。");
-                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return;
+                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
                 }
 
                 Log("[ABM TryActivate] 尝试直接调用 m_SpellsGroup.SetVisible(true, true)。");
@@ -378,9 +408,9 @@ namespace QuickCast
                     game.CurrentMode == GameModeType.TacticalCombat ||
                     game.CurrentMode == GameModeType.Pause)
                 {
-                    Log($"[ABM TryActivate] 正在将 CurrentSpellLevel.Value 设置为 {targetPageLevel}。先前的值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
-                    actionBarVMToSetLevel.CurrentSpellLevel.Value = targetPageLevel;
-                    Log($"[ABM TryActivate] 法术等级已通过 VM 设置为 {targetPageLevel}。新值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
+                    Log($"[ABM TryActivate] 正在将 CurrentSpellLevel.Value 设置为 {spellLevel}。先前的值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
+                    actionBarVMToSetLevel.CurrentSpellLevel.Value = spellLevel;
+                    Log($"[ABM TryActivate] 法术等级已通过 VM 设置为 {spellLevel}。新值：{actionBarVMToSetLevel.CurrentSpellLevel.Value}");
                 }
                 else
                 {
@@ -388,7 +418,7 @@ namespace QuickCast
                 }
 
                 _isQuickCastModeActive = true;
-                _activeQuickCastPage = targetPageLevel;
+                _activeQuickCastPage = spellLevel;
 
                 RefreshMainActionBarForCurrentQuickCastPage(); // 调用统一的刷新逻辑
 
@@ -397,12 +427,14 @@ namespace QuickCast
                 string message = $"快捷施法: {pageNameDisplay} 已激活";
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
                 Log($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。");
+                return true;
             }
             catch (Exception ex)
             {
-                Log($"[ABM] TryActivateQuickCastPage 期间出错：{ex.ToString()}");
+                Log($"[ABM] TryActivateQuickCastMode 期间出错：{ex.ToString()}");
                 RestoreMainActionBarDisplay(); // 出错时恢复显示
                 _activeQuickCastPage = -1; _isQuickCastModeActive = false;
+                return false;
             }
         }
 
@@ -469,6 +501,35 @@ namespace QuickCast
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
                 Log($"[ABM] 内部：从页面 {exitedPageNameDisplay} 返回到主快捷栏。");
             }
+        }
+
+        // 辅助方法：获取当前选中角色的绑定数据字典
+        // 如果不存在该角色的绑定数据且 createIfMissing 为 true，则为其创建一个新的空字典
+        private Dictionary<int, Dictionary<int, AbilityData>> GetCurrentCharacterBindings(bool createIfMissing = false)
+        {
+            var selectedUnit = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter;
+            if (selectedUnit == null || selectedUnit.UniqueId == null)
+            {
+                Log("[ABM GetCurrentCharacterBindings] Error: No selected unit or unit UniqueId is null.");
+                return null; // 或者返回一个临时的空字典，取决于后续逻辑如何处理
+            }
+
+            string charId = selectedUnit.UniqueId;
+            if (!PerCharacterQuickCastBindings.TryGetValue(charId, out var bindings))
+            {
+                if (createIfMissing)
+                {
+                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Creating new binding set.");
+                    bindings = new Dictionary<int, Dictionary<int, AbilityData>>();
+                    PerCharacterQuickCastBindings[charId] = bindings;
+                }
+                else
+                {
+                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Not creating new set.");
+                    return null; // 或者返回一个临时的空字典
+                }
+            }
+            return bindings;
         }
         #endregion
     }
