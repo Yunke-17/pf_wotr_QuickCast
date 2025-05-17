@@ -114,6 +114,16 @@ namespace QuickCast
         }
         #endregion
 
+        #region 新增：判断游戏模式是否应清除缓存的辅助方法
+        private static bool ShouldClearCachedViewForGameMode(GameModeType gameMode)
+        {
+            // 优先使用 ToString() 进行比较，以防 GameModeType 枚举的直接成员在此处不可用
+            // 或未来发生变化。这是更稳健的做法，直到我们能确认枚举的确切定义。
+            string modeName = gameMode.ToString();
+            return modeName == "MainMenu" || modeName == "LoadingScreen";
+        }
+        #endregion
+
         #region UMM Mod入口与生命周期回调
         // Mod加载入口点
         public static bool Load(UnityModManager.ModEntry modEntry)
@@ -147,6 +157,8 @@ namespace QuickCast
                 () => CachedActionBarPCView, 
                 () => _spellsGroupFieldInfo 
             );
+            EventBus.Subscribe(_actionBarManager); // Subscribe ActionBarManager to EventBus
+            Log("ActionBarManager 已订阅 EventBus。");
 
             Log("QuickCast Mod Load 方法完成。");
             return true; 
@@ -157,10 +169,29 @@ namespace QuickCast
         {
             IsEnabled = value; 
             Log($"QuickCast Mod {(IsEnabled ? "已启用" : "已禁用")}");
-            if (!IsEnabled && _actionBarManager != null && _actionBarManager.IsQuickCastModeActive)
+            if (!IsEnabled)
             {
-                _actionBarManager.TryDeactivateQuickCastMode(true); 
-                _previousSpellbookActiveAndInteractableState = null; 
+                if (_actionBarManager != null)
+                {
+                    if (_actionBarManager.IsQuickCastModeActive)
+                    {
+                        _actionBarManager.TryDeactivateQuickCastMode(true);
+                    }
+                    // Unsubscribe when mod is disabled
+                    EventBus.Unsubscribe(_actionBarManager); 
+                    Log("ActionBarManager 已从 EventBus 取消订阅 (Mod 禁用).");
+                }
+                 _previousSpellbookActiveAndInteractableState = null; 
+            }
+            else
+            {
+                // Subscribe when mod is enabled, if _actionBarManager exists
+                if (_actionBarManager != null)
+                {
+                    EventBus.Subscribe(_actionBarManager);
+                    Log("ActionBarManager 已重新订阅 EventBus (Mod 启用).");
+                }
+                // Potentially re-initialize or re-cache things if needed upon re-enabling
             }
             return true; 
         }
@@ -168,25 +199,59 @@ namespace QuickCast
         // 每帧更新的回调
         private static void OnUpdate(UnityModManager.ModEntry modEntry, float dt)
         {
-            if (!IsEnabled || Game.Instance == null || Game.Instance.RootUiContext == null || Game.Instance.CurrentMode == GameModeType.None || Game.Instance.CurrentMode == GameModeType.FullScreenUi)
+            // 首先，检查是否应该完全跳过处理（例如，Mod未启用或游戏未完全加载）
+            if (!IsEnabled || Game.Instance == null || Game.Instance.RootUiContext == null)
             {
-                 // 如果游戏未完全加载或处于不适合操作的模式，则不执行任何操作
-                if (CachedActionBarPCView != null && (Game.Instance == null || Game.Instance.CurrentMode == GameModeType.FullScreenUi || Game.Instance.CurrentMode == GameModeType.None || Game.Instance.CurrentMode == GameModeType.FullScreenUi))
+                // 如果游戏实例不存在或UI上下文不存在（可能在非常早期的加载阶段），则不应尝试访问游戏模式
+                // 但如果CachedActionBarPCView存在，且游戏实例不存在了（比如退回主菜单的过程），则可以清除
+                if (CachedActionBarPCView != null && Game.Instance == null) 
                 {
-                    // 如果已缓存但返回主菜单或加载，清除缓存以便下次重新查找
-                    Log("[Main OnUpdate] 游戏返回主菜单或加载界面，清除 CachedActionBarPCView。");
+                    Log("[Main OnUpdate] Game.Instance 为空 (可能已退回主菜单)，清除 CachedActionBarPCView。");
                     CachedActionBarPCView = null;
-                    _spellsGroupFieldInfo = null; // 也清除这个，因为它依赖于视图实例
+                    _spellsGroupFieldInfo = null;
                 }
                 return; 
             }
 
+            // 接下来，检查是否处于明确应该清除缓存的游戏模式
+            GameModeType currentMode = Game.Instance.CurrentMode;
+            if (ShouldClearCachedViewForGameMode(currentMode)) // 使用新的辅助方法
+            {
+                if (CachedActionBarPCView != null)
+                {
+                    Log($"[Main OnUpdate] 游戏处于 {currentMode} 模式 (判断为应清除缓存)，清除 CachedActionBarPCView。");
+                    CachedActionBarPCView = null;
+                    _spellsGroupFieldInfo = null; 
+                }
+                return; // 在这些模式下不执行后续逻辑
+            }
+
+            // 检查是否处于不应执行Mod核心逻辑的游戏模式（None）
+            if (currentMode == GameModeType.None)
+            {
+                // GameModeType.None 是一个比较模糊的状态，可能在场景切换的瞬间出现。
+                // 通常不建议在此状态下执行太多操作，但也不一定需要清除 ActionBarPCView，
+                // 因为可能只是短暂过渡。如果确实需要，可以取消下面的注释。
+                // Log("[Main OnUpdate] 游戏处于 GameModeType.None 模式，暂时跳过 QuickCast 逻辑。");
+                return; // 如果在None模式下不应执行任何操作
+            }
+            
+            // 到这里，我们应该处于一个可以运行Mod逻辑的游戏模式 (Default, TacticalCombat, Dialog, FullScreenUi (in-game), etc.)
+            // FullScreenUi (游戏内全屏，如角色面板) 不应清除 CachedActionBarPCView，
+            // 因为关闭后需要它来恢复UI。
+
             if (CachedActionBarPCView == null)
             {
                 EnsureCachedActionBarView(); 
+                if (CachedActionBarPCView == null) // 如果尝试获取后仍然为空，则此帧无法继续
+                {
+                     return;
+                }
             }
            
             if (_actionBarManager == null) return;
+
+            _actionBarManager.Update(); // Call ActionBarManager's Update method
 
             ActionBarManager.ClearRecentlyBoundSlotsIfNewFrame();
             HandleInput();
@@ -198,6 +263,17 @@ namespace QuickCast
             if (!IsEnabled) return; 
             if (Settings == null) { Log("错误：设置实例为空，无法绘制GUI。"); return; }
 
+            // 在此添加Mod设置界面的说明文字
+            GUILayout.Label("欢迎使用 QuickCast Mod 设置!", new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold });
+            GUILayout.Space(5);
+            GUILayout.Label("说明:");
+            GUILayout.Label("  - 点击对应条目右侧的\"设置\"按钮后，按下键盘上的任意键来绑定。", GUILayout.ExpandWidth(false));
+            GUILayout.Label("  - 在\"请按键...\"状态下，按【Escape】键可以取消当前设置操作。", GUILayout.ExpandWidth(false));
+            GUILayout.Label("  - 在\"请按键...\"状态下，点击【鼠标右键】可以将该按键绑定清除 (设置为 None)。", GUILayout.ExpandWidth(false));
+            GUILayout.Label("  - \"页面激活键\"需要与键盘上的【Ctrl】键组合使用。", GUILayout.ExpandWidth(false));
+            GUILayout.Label("  - 如果出现\"按键冲突!\"提示，请确保在同一配置区域内没有重复的按键设置。", GUILayout.ExpandWidth(false));
+            GUILayout.Space(15);
+
             DrawBindKeySettings();
             GUILayout.Space(10);
 
@@ -208,6 +284,9 @@ namespace QuickCast
             GUILayout.Space(20);
 
             DrawBehaviorSettings();
+            GUILayout.Space(20);
+
+            DrawResetToDefaultsButton();
             GUILayout.Space(20);
 
             HandleKeyCaptureForSettings();
@@ -449,7 +528,22 @@ namespace QuickCast
                     GUILayout.BeginHorizontal();
                     GUILayout.Label(_logicalSlotLabels[i], GUILayout.Width(200));
                     string currentKeyDisplay = (_currentlySettingBindKeyForSlot == i) ? "请按键..." : Settings.BindKeysForLogicalSlots[i].ToString();
-                    GUILayout.Label(currentKeyDisplay, GUILayout.Width(120));
+                    
+                    // 冲突检测
+                    string conflictWarning = "";
+                    if (Settings.BindKeysForLogicalSlots[i] != KeyCode.None)
+                    {
+                        for (int j = 0; j < Settings.BindKeysForLogicalSlots.Length; j++)
+                        {
+                            if (i != j && Settings.BindKeysForLogicalSlots[j] == Settings.BindKeysForLogicalSlots[i])
+                            {
+                                conflictWarning = "  <color=red>按键冲突!</color>";
+                                break;
+                            }
+                        }
+                    }
+                    GUILayout.Label(currentKeyDisplay + conflictWarning, GUILayout.Width(180)); // 调整宽度以容纳警告
+
                     if (GUILayout.Button("设置", GUILayout.Width(60)))
                     {
                         _isSettingReturnKey = false;
@@ -472,7 +566,22 @@ namespace QuickCast
                     GUILayout.BeginHorizontal();
                     GUILayout.Label(_pageActivationLevelLabels[i], GUILayout.Width(200));
                     string currentKeyDisplay = (_currentlySettingPageKeyForLevel == i) ? "请按键..." : Settings.PageActivation_Keys[i].ToString();
-                    GUILayout.Label(currentKeyDisplay, GUILayout.Width(120));
+
+                    // 冲突检测
+                    string conflictWarning = "";
+                    if (Settings.PageActivation_Keys[i] != KeyCode.None)
+                    {
+                        for (int j = 0; j < Settings.PageActivation_Keys.Length; j++)
+                        {
+                            if (i != j && Settings.PageActivation_Keys[j] == Settings.PageActivation_Keys[i])
+                            {
+                                conflictWarning = "  <color=red>按键冲突!</color>";
+                                break;
+                            }
+                        }
+                    }
+                    GUILayout.Label(currentKeyDisplay + conflictWarning, GUILayout.Width(180)); // 调整宽度以容纳警告
+
                     if (GUILayout.Button("设置", GUILayout.Width(60)))
                     {
                         _isSettingReturnKey = false;
@@ -509,6 +618,44 @@ namespace QuickCast
             Settings.AutoReturnAfterCast = GUILayout.Toggle(Settings.AutoReturnAfterCast, "施法启动后自动返回主快捷栏");
         }
 
+        // 新增方法：绘制重置为默认值按钮
+        private static void DrawResetToDefaultsButton()
+        {
+            GUILayout.Label("恢复默认设置 (Restore Defaults):", GUILayout.ExpandWidth(false));
+            GUILayout.Space(5);
+            if (GUILayout.Button("将所有设置重置为推荐默认值", GUILayout.ExpandWidth(true)))
+            {
+                if (Settings != null)
+                {
+                    Log("[Main OnGUI] 用户点击了重置为推荐默认值按钮。");
+                    Settings temporaryDefaultSettings = new Settings(); // 这会调用构造函数并填充默认值
+
+                    // 复制绑定键
+                    if (temporaryDefaultSettings.BindKeysForLogicalSlots != null && Settings.BindKeysForLogicalSlots.Length == temporaryDefaultSettings.BindKeysForLogicalSlots.Length)
+                    {
+                        Array.Copy(temporaryDefaultSettings.BindKeysForLogicalSlots, Settings.BindKeysForLogicalSlots, temporaryDefaultSettings.BindKeysForLogicalSlots.Length);
+                    }
+
+                    // 复制页面激活键
+                    if (temporaryDefaultSettings.PageActivation_Keys != null && Settings.PageActivation_Keys.Length == temporaryDefaultSettings.PageActivation_Keys.Length)
+                    {
+                        Array.Copy(temporaryDefaultSettings.PageActivation_Keys, Settings.PageActivation_Keys, temporaryDefaultSettings.PageActivation_Keys.Length);
+                    }
+
+                    // 复制其他设置
+                    Settings.ReturnToMainKey = temporaryDefaultSettings.ReturnToMainKey;
+                    Settings.EnableDoubleTapToReturn = temporaryDefaultSettings.EnableDoubleTapToReturn;
+                    Settings.AutoReturnAfterCast = temporaryDefaultSettings.AutoReturnAfterCast;
+
+                    Log("[Main OnGUI] 设置已重置为推荐默认值。");
+                    // ModEntry.ModSettings.Save(ModEntry); // 可选：立即保存，或者让用户手动保存
+                }
+                else
+                {
+                    Log("[Main OnGUI] 错误：尝试重置设置时，Settings 实例为空。");
+                }
+            }
+        }
 
         private static void HandleKeyCaptureForSettings()
         {
@@ -529,29 +676,65 @@ namespace QuickCast
             {
                 if (e.keyCode == KeyCode.Escape) 
                 {
+                    Log($"为 [{settingWhichKeyLabel.TrimEnd(':')}] 设置按键已通过 Escape 取消。");
                     _currentlySettingBindKeyForSlot = -1;
                     _currentlySettingPageKeyForLevel = -1;
                     _isSettingReturnKey = false;
                 }
                 else if (e.keyCode != KeyCode.None) 
                 {
+                    string logMessage = $"按键 {e.keyCode} 已设置给";
                     if (_currentlySettingBindKeyForSlot != -1)
                     {
                         Settings.BindKeysForLogicalSlots[_currentlySettingBindKeyForSlot] = e.keyCode;
+                        logMessage += $" {_logicalSlotLabels[_currentlySettingBindKeyForSlot].TrimEnd(':')}";
                         _currentlySettingBindKeyForSlot = -1; 
                     }
                     else if (_currentlySettingPageKeyForLevel != -1)
                     {
                         Settings.PageActivation_Keys[_currentlySettingPageKeyForLevel] = e.keyCode;
+                        logMessage += $" {_pageActivationLevelLabels[_currentlySettingPageKeyForLevel].TrimEnd(':')}";
                         _currentlySettingPageKeyForLevel = -1; 
                     }
                     else if (_isSettingReturnKey)
                     {
                         Settings.ReturnToMainKey = e.keyCode;
+                        logMessage += " 返回键";
                         _isSettingReturnKey = false; 
                     }
+                    Log(logMessage);
                 }
                 e.Use(); 
+            }
+            // 新增：处理鼠标右键点击以取消按键设置
+            else if (e.isMouse && e.type == EventType.MouseDown && e.button == 1) // e.button == 1 是右键点击
+            {
+                string logMessage = $"通过右键点击取消了为 [{settingWhichKeyLabel.TrimEnd(':')}] 设置按键。";
+                bool cancelled = false;
+                if (_currentlySettingBindKeyForSlot != -1)
+                {
+                    Settings.BindKeysForLogicalSlots[_currentlySettingBindKeyForSlot] = KeyCode.None;
+                    _currentlySettingBindKeyForSlot = -1;
+                    cancelled = true;
+                }
+                else if (_currentlySettingPageKeyForLevel != -1)
+                {
+                    Settings.PageActivation_Keys[_currentlySettingPageKeyForLevel] = KeyCode.None;
+                    _currentlySettingPageKeyForLevel = -1;
+                    cancelled = true;
+                }
+                else if (_isSettingReturnKey)
+                {
+                    Settings.ReturnToMainKey = KeyCode.None; // 允许将返回键也清空
+                    _isSettingReturnKey = false;
+                    cancelled = true;
+                }
+
+                if (cancelled)
+                {
+                    Log(logMessage);
+                    e.Use();
+                }
             }
         }
         #endregion

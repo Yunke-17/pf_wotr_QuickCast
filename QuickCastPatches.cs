@@ -153,6 +153,45 @@ namespace QuickCast
             }
         }
         #endregion
+
+        #region ActionBarSlotVM.SetMechanicSlot 补丁 (检测拖拽清除)
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._VM.ActionBar.ActionBarSlotVM), "SetMechanicSlot")] 
+        // 推定签名: public void SetMechanicSlot(MechanicActionBarSlot abs)
+        static class ActionBarSlotVM_SetMechanicSlot_Postfix_Patch
+        {
+            static void Postfix(Kingmaker.UI.MVVM._VM.ActionBar.ActionBarSlotVM __instance, MechanicActionBarSlot abs)
+            {
+                if (Main.IsEnabled && Main._actionBarManager != null && 
+                    Main._actionBarManager.IsQuickCastModeActive && 
+                    !Main._actionBarManager.IsInternalBarUpdateInProgress && 
+                    !Main._actionBarManager.IsStateTransitionInProgress)
+                {
+                    // 检查槽位是否被设置为空
+                    bool isSlotEmptied = (abs == null || abs is MechanicActionBarSlotEmpty);
+
+                    if (isSlotEmptied)
+                    {
+                        int slotIndex = __instance.Index; 
+                        // 确保这个索引是我们Mod管理的槽位索引之一 (0-11)
+                        // _mainBarManagedSlotIndices 是 private 的，但我们知道其范围是 0-11
+                        if (slotIndex >= 0 && slotIndex < 12) 
+                        {
+                            // 进一步确认这个 ActionBarSlotVM 实例确实是主行动栏上的那一个
+                            // 而不是法术书或其他地方的。可以通过检查其父级 ActionBarVM 是否为游戏当前的 ActionBarVM
+                            var gameActionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
+                            if (gameActionBarVM != null && gameActionBarVM.Slots.Contains(__instance))
+                            {
+                                Main.Log($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} in QuickCast mode was emptied (new type: {abs?.GetType().Name ?? "null"}). Attempting to unbind.");
+                                Main._actionBarManager.UnbindSpellFromLogicalSlotIfActive(slotIndex);
+                            }
+                            // else: Log("[Patch SetMechanicSlot Postfix] Slot {slotIndex} was emptied, but it doesn't seem to be part of the main action bar VM currently.");
+                        }
+                        // else: Log($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} was emptied, but it's outside the managed range (0-11).");
+                    }
+                }
+            }
+        }
+        #endregion
     }
 
     /*

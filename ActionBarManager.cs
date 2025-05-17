@@ -18,11 +18,18 @@ using Kingmaker.UnitLogic.Commands;
 
 namespace QuickCast
 {
-    public class ActionBarManager
+    public class ActionBarManager : IGameModeHandler, ISelectionManagerUIHandler
     {
         #region 核心状态与字段
         private int _activeQuickCastPage = -1;
         private bool _isQuickCastModeActive = false;
+        private int _pageToRestoreAfterDialog = -1;
+
+        private bool _deferredRestoreQueued = false; // New field for deferred restore
+        private int _pageToRestoreDeferred = -1;   // New field for deferred restore
+
+        private bool _isInternalBarUpdate = false; // 新增：用于防止内部更新触发解绑
+        private bool _isStateTransitionInProgress = false; // 新增：用于处理对话、角色切换等状态转换
 
         // 用于施法后自动返回的标记
         internal static Tuple<UnitEntityData, BlueprintAbility> SpellCastToAutoReturn { get; set; } = null;
@@ -30,7 +37,7 @@ namespace QuickCast
         // 存储被Mod覆盖的主行动栏槽位的原始内容
         private readonly Dictionary<int, MechanicActionBarSlot> _mainBarOverriddenSlotsOriginalContent;
         // 新字段：存储Mod管理的主行动栏槽位索引列表
-        private readonly List<int> _mainBarManagedSlotIndices;
+        // private readonly List<int> _mainBarManagedSlotIndices; // 不再需要此字段
 
         // 原来的静态绑定字典，现在改为按角色ID存储
         // private static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
@@ -58,7 +65,7 @@ namespace QuickCast
             _mainBarOverriddenSlotsOriginalContent = new Dictionary<int, MechanicActionBarSlot>();
             _emptySlotPlaceholder = new MechanicActionBarSlotEmpty();
 
-            _mainBarManagedSlotIndices = new List<int> { 0, 1, 2, 3, 4, 5 };
+            // _mainBarManagedSlotIndices = new List<int> { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }; // 不再需要初始化此字段
             // 如果需要管理主快捷栏上更多的槽位（例如对应按键7,8,9,0,-,=的槽位6-11），请扩展此列表。
 
             // 初始化 QuickCastBindings - 目前为空。
@@ -91,6 +98,8 @@ namespace QuickCast
 
         public bool IsQuickCastModeActive => _isQuickCastModeActive;
         public int ActiveQuickCastPage => _activeQuickCastPage;
+        public bool IsInternalBarUpdateInProgress => _isInternalBarUpdate; // 新增 getter
+        public bool IsStateTransitionInProgress => _isStateTransitionInProgress; // 新增 getter
         #endregion
 
         #region 核心行动栏管理逻辑
@@ -99,11 +108,13 @@ namespace QuickCast
 
         private void RestoreMainActionBarDisplay()
         {
+            _isInternalBarUpdate = true; // 设置标志
             var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             if (actionBarVM == null || actionBarVM.Slots == null)
             {
                 Log("[ABM] 无法恢复行动栏：ActionBarVM 或 Slots 不可用。");
                 _mainBarOverriddenSlotsOriginalContent.Clear(); // 清除以防止陈旧数据问题
+                _isInternalBarUpdate = false; // 清除标志
                 return;
             }
 
@@ -132,6 +143,7 @@ namespace QuickCast
                 }
             }
             _mainBarOverriddenSlotsOriginalContent.Clear();
+            _isInternalBarUpdate = false; // 清除标志
         }
 
         /// <summary>
@@ -142,12 +154,15 @@ namespace QuickCast
         {
             if (!_isQuickCastModeActive || _activeQuickCastPage == -1) return;
 
+            _isInternalBarUpdate = true; // 设置标志
+
             var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
             var currentUnit = actionBarVM?.SelectedUnit.Value;
 
             if (actionBarVM == null || actionBarVM.Slots == null || currentUnit == null)
             {
                 Log("[ABM] 无法刷新行动栏：ViewModel、Slots 或 Unit 不可用。");
+                _isInternalBarUpdate = false; // 清除标志
                 return;
             }
 
@@ -173,9 +188,16 @@ namespace QuickCast
             }
 
             // 遍历 _mainBarManagedSlotIndices 以了解要更新哪些UI槽位。
-            foreach (int logicalSlotIndexToRefresh in _mainBarManagedSlotIndices) // 新循环
+            for (int logicalSlotIndexToRefresh = 0; logicalSlotIndexToRefresh < Math.Min(actionBarVM.Slots.Count, Main.Settings.BindKeysForLogicalSlots.Length); logicalSlotIndexToRefresh++)
             {
-                if (logicalSlotIndexToRefresh >= 0 && logicalSlotIndexToRefresh < actionBarVM.Slots.Count)
+                // 如果此槽位的绑定键未在Mod设置中配置，则QuickCast不管理此槽位，跳过刷新
+                if (Main.Settings.BindKeysForLogicalSlots[logicalSlotIndexToRefresh] == KeyCode.None)
+                {
+                    Log($"[ABM Refresh] 槽位 {logicalSlotIndexToRefresh} 的绑定键未配置，QuickCast不管理此槽位，跳过刷新。");
+                    continue;
+                }
+
+                if (logicalSlotIndexToRefresh >= 0 && logicalSlotIndexToRefresh < actionBarVM.Slots.Count) // 冗余检查，因为循环条件已包含Math.Min
                 {
                     ActionBarSlotVM slotVM = actionBarVM.Slots[logicalSlotIndexToRefresh];
                     if (slotVM != null)
@@ -203,6 +225,7 @@ namespace QuickCast
                     }
                 }
             }
+            _isInternalBarUpdate = false; // 清除标志
         }
 
         /// <summary>
@@ -256,6 +279,17 @@ namespace QuickCast
             if (_isQuickCastModeActive && _activeQuickCastPage == spellLevel)
             {
                 RefreshMainActionBarForCurrentQuickCastPage();
+            }
+
+            // 播放绑定音效
+            if (Kingmaker.UI.UISoundController.Instance != null)
+            {
+                Kingmaker.UI.UISoundController.Instance.Play(Kingmaker.UI.UISoundType.ActionBarSlotClick);
+                Log($"[ABM BindSpell] 已为法术 '{spellData.Name}' 播放 ActionBarSlotClick 音效。");
+            }
+            else
+            {
+                Log("[ABM BindSpell] UISoundController.Instance 为空，无法为绑定播放音效。");
             }
         }
 
@@ -333,8 +367,15 @@ namespace QuickCast
             if (currentActionBarVMForSaving != null)
             {
                 Log("[ABM TryActivate] 尝试在覆盖快捷施法页面之前保存当前行动栏状态。");
-                foreach (int slotIndexToSave in _mainBarManagedSlotIndices) // 新循环
+                for (int slotIndexToSave = 0; slotIndexToSave < Math.Min(currentActionBarVMForSaving.Slots.Count, Main.Settings.BindKeysForLogicalSlots.Length); slotIndexToSave++)
                 {
+                    if (Main.Settings.BindKeysForLogicalSlots[slotIndexToSave] == KeyCode.None)
+                    {
+                        // 如果此槽位的绑定键未设置，则不保存其原始内容，QuickCast 不会管理此槽位
+                        Log($"[ABM TryActivate] 槽位 {slotIndexToSave} 的绑定键未在Mod设置中配置，QuickCast将不会管理此槽位，不保存其原始内容。");
+                        continue;
+                    }
+
                     if (slotIndexToSave >= 0 && slotIndexToSave < currentActionBarVMForSaving.Slots.Count)
                     {
                         ActionBarSlotVM slotVM = currentActionBarVMForSaving.Slots[slotIndexToSave];
@@ -427,6 +468,18 @@ namespace QuickCast
                 string message = $"快捷施法: {pageNameDisplay} 已激活";
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
                 Log($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。");
+
+                // 播放激活音效
+                if (Kingmaker.UI.UISoundController.Instance != null)
+                {
+                    Kingmaker.UI.UISoundController.Instance.Play(Kingmaker.UI.UISoundType.SpellbookOpen);
+                    Log("[ABM TryActivate] 已播放 SpellbookOpen 音效。");
+                }
+                else
+                {
+                    Log("[ABM TryActivate] UISoundController.Instance 为空，无法播放激活音效。");
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -500,6 +553,17 @@ namespace QuickCast
                 string message = $"快捷施法: 返回主快捷栏";
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
                 Log($"[ABM] 内部：从页面 {exitedPageNameDisplay} 返回到主快捷栏。");
+
+                // 播放停用音效
+                if (Kingmaker.UI.UISoundController.Instance != null)
+                {
+                    Kingmaker.UI.UISoundController.Instance.Play(Kingmaker.UI.UISoundType.SpellbookClose);
+                    Log("[ABM TryDeactivate] 已播放 SpellbookClose 音效。");
+                }
+                else
+                {
+                    Log("[ABM TryDeactivate] UISoundController.Instance 为空，无法播放停用音效。");
+                }
             }
         }
 
@@ -530,6 +594,283 @@ namespace QuickCast
                 }
             }
             return bindings;
+        }
+        #endregion
+
+        #region Event Handlers (IGameModeHandler, ISelectionManagerUIHandler)
+        // Handler for IGameModeHandler
+        public void OnGameModeStart(GameModeType gameMode)
+        {
+            _isStateTransitionInProgress = true; // Set state transition flag at the beginning of any game mode change
+            Log($"[ABM OnGameModeStart] Game mode START: {gameMode}. QC Active: {_isQuickCastModeActive}, PageToRestoreDialog: {_pageToRestoreAfterDialog}");
+
+            if (gameMode == GameModeType.Dialog || gameMode == GameModeType.FullScreenUi)
+            {
+                if (_isQuickCastModeActive)
+                {
+                    Log($"[ABM OnGameModeStart] {gameMode} mode started. Saving current QuickCast page: {_activeQuickCastPage} for potential restoration.");
+                    // We use _pageToRestoreAfterDialog for both dialogs and full-screen UI for simplicity,
+                    // as they are unlikely to be nested in a way that requires separate tracking.
+                    _pageToRestoreAfterDialog = _activeQuickCastPage;
+                    // We don't deactivate QuickCast here immediately.
+                    // The idea is to restore it if possible when the mode stops.
+                    // However, the underlying UI might reset. The transition flag should protect unbinding.
+                }
+                else
+                {
+                    // If QC is not active, ensure no previous page is lingering for restoration from these modes.
+                     _pageToRestoreAfterDialog = -1;
+                }
+            }
+            else if (_pageToRestoreAfterDialog != -1 &&
+                     (gameMode == GameModeType.Default || gameMode == GameModeType.TacticalCombat || gameMode == GameModeType.GlobalMap))
+            {
+                // This block now specifically handles restoration *after* Dialog or FullScreenUI has *ended*
+                // and we are returning to a "normal" game mode.
+                Log($"[ABM OnGameModeStart] Normal game mode {gameMode} started. Queuing deferred restoration of QuickCast page: {_pageToRestoreAfterDialog} (from previous Dialog/FullScreenUI).");
+                _deferredRestoreQueued = true;
+                _pageToRestoreDeferred = _pageToRestoreAfterDialog;
+                _pageToRestoreAfterDialog = -1; // Reset the immediate flag once queued
+            }
+            else
+            {
+                // If no specific handling for this gameMode start, and not restoring, ensure transition flag is cleared if no deferred actions.
+                if (!_deferredRestoreQueued) { // Check _deferredRestoreQueued as well
+                    _isStateTransitionInProgress = false;
+                    Log($"[ABM OnGameModeStart] Game mode {gameMode} started. No specific QC action or pending restore. Cleared _isStateTransitionInProgress.");
+                } else {
+                    Log($"[ABM OnGameModeStart] Game mode {gameMode} started. No specific QC action, but _deferredRestoreQueued is true. _isStateTransitionInProgress remains.");
+                }
+            }
+        }
+
+        public void OnGameModeStop(GameModeType gameMode)
+        {
+            Log($"[ABM OnGameModeStop] Game mode STOP: {gameMode}. QC Active: {_isQuickCastModeActive}, PageToRestoreDialog: {_pageToRestoreAfterDialog}, DeferredRestoreQueued: {_deferredRestoreQueued}, PageToRestoreDeferred: {_pageToRestoreDeferred}");
+            // When Dialog or FullScreenUi stops, OnGameModeStart for Default/TacticalCombat etc. should fire
+            // and handle the queuing of _pageToRestoreAfterDialog. So, no direct action needed here for those specific stops
+            // to trigger restoration. The critical part is that _pageToRestoreAfterDialog was set correctly in their OnGameModeStart.
+
+            // However, we need to manage _isStateTransitionInProgress.
+            // If a game mode stops, and no deferred action has been queued by its corresponding OnGameModeStart
+            // (or by a character switch that might have happened during that mode),
+            // then the transition might be considered over.
+            if (!_deferredRestoreQueued) {
+                _isStateTransitionInProgress = false;
+                Log($"[ABM OnGameModeStop] Game mode {gameMode} stopped. No deferred restore was queued by a subsequent OnGameModeStart. Cleared _isStateTransitionInProgress.");
+            } else {
+                Log($"[ABM OnGameModeStop] Game mode {gameMode} stopped. _deferredRestoreQueued is true. _isStateTransitionInProgress remains for Update() to handle.");
+            }
+        }
+
+        // Handler for ISelectionManagerUIHandler
+        public void HandleSwitchSelectionUnitInGroup()
+        {
+            _isStateTransitionInProgress = true;
+            try
+            {
+                if (_isQuickCastModeActive)
+                {
+                    Log("[ABM HandleSwitchSelectionUnitInGroup] QuickCast is active. Deactivating due to character switch.");
+                    TryDeactivateQuickCastMode(true); // This will set _isQuickCastModeActive = false and _activeQuickCastPage = -1
+                    
+                    // Cancel any pending deferred operations specific to maintaining QC state across transitions
+                    _deferredRestoreQueued = false;
+                    _pageToRestoreDeferred = -1;
+                }
+                else
+                {
+                    Log("[ABM HandleSwitchSelectionUnitInGroup] Character switch detected. QuickCast was not active. No specific QC deactivation needed.");
+                    // If _deferredRestoreQueued was true (e.g. from a dialog ending when QC was off),
+                    // the Update() method will handle it with the new character context.
+                }
+            }
+            finally
+            {
+                // This transition is considered handled by this method in terms of QC state.
+                // If _deferredRestoreQueued was true and QC was NOT active, Update() will eventually clear _isStateTransitionInProgress after processing it.
+                // If QC WAS active, it's now deactivated, and no QC-specific deferred actions are pending from this handler.
+                // If _deferredRestoreQueued becomes true from another source after this but before Update clears it, that's a separate concern.
+                // For clarity, ensure it's cleared if no dialog restore is pending for Update() to handle.
+                if (!_deferredRestoreQueued) {
+                     _isStateTransitionInProgress = false;
+                     Log("[ABM HandleSwitchSelectionUnitInGroup] Cleared _isStateTransitionInProgress.");
+                }
+                else {
+                    Log("[ABM HandleSwitchSelectionUnitInGroup] _isStateTransitionInProgress NOT cleared by HandleSwitch; _deferredRestoreQueued is pending for Update().");
+                }
+            }
+        }
+        #endregion
+
+        #region Update Logic
+        /// <summary>
+        /// Called every frame by Main.OnUpdate to handle deferred actions.
+        /// </summary>
+        public void Update()
+        {
+            bool dialogRestoreRanThisFrame = false;
+
+            if (_deferredRestoreQueued)
+            {
+                var selectedUnits = Game.Instance?.SelectionCharacter?.SelectedUnits;
+                var currentSelectedCharacter = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter;
+
+                if (selectedUnits == null || currentSelectedCharacter == null || selectedUnits.Count != 1)
+                {
+                    Log($"[ABM Update] Deferred dialog restore for page {_pageToRestoreDeferred} cancelled: Invalid unit selection (Count: {selectedUnits?.Count ?? -1}).");
+                    if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true); // Should not be active if switch deactivates
+                }
+                else
+                {
+                var spellbook = currentSelectedCharacter.Descriptor?.Spellbooks?.FirstOrDefault();
+                if (spellbook == null || _pageToRestoreDeferred > spellbook.MaxSpellLevel)
+                {
+                        Log($"[ABM Update] Deferred dialog restore for page {_pageToRestoreDeferred} cancelled: Unit {currentSelectedCharacter.CharacterName} cannot use this spell level.");
+                        if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true); // Should not be active
+                    }
+                    else
+                    {
+                        Log($"[ABM Update] Executing deferred dialog restore for page: {_pageToRestoreDeferred} for unit {currentSelectedCharacter.CharacterName}. This will attempt to activate QuickCast.");
+                TryActivateQuickCastMode(_pageToRestoreDeferred, false);
+                    }
+                }
+                _deferredRestoreQueued = false;
+                _pageToRestoreDeferred = -1;
+                dialogRestoreRanThisFrame = true;
+            }
+
+            if (dialogRestoreRanThisFrame) // Only based on dialog restore now
+            {
+                if (_isQuickCastModeActive) // If TryActivateQuickCastMode above was successful
+                {
+                    Log($"[ABM Update] Dialog restore action completed. Performing final focused spellbook level sync to page {_activeQuickCastPage}.");
+                    ForceSyncSpellbookDisplayToPage(_activeQuickCastPage); 
+                }
+                
+                if (_isStateTransitionInProgress) 
+                {
+                    Log($"[ABM Update] Clearing _isStateTransitionInProgress after deferred dialog restore. QC Active: {_isQuickCastModeActive}.");
+                    _isStateTransitionInProgress = false;
+                }
+            }
+            else if (_isQuickCastModeActive && !_isInternalBarUpdate && !_isStateTransitionInProgress && Game.Instance.CurrentMode != GameModeType.FullScreenUi) 
+            {
+                var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
+                if (actionBarVM != null && actionBarVM.SelectedUnit.Value != null && 
+                    actionBarVM.CurrentSpellLevel.Value != _activeQuickCastPage)
+                {
+                    var spellbook = actionBarVM.SelectedUnit.Value.Descriptor?.Spellbooks?.FirstOrDefault();
+                    if (spellbook != null && _activeQuickCastPage <= spellbook.MaxSpellLevel)
+                    {
+                        Log($"[ABM Update - Idle Sync] Spellbook level mismatch (VM: {actionBarVM.CurrentSpellLevel.Value}, Expected: {_activeQuickCastPage}). Forcing sync via ForceSyncSpellbookDisplayToPage.");
+                        ForceSyncSpellbookDisplayToPage(_activeQuickCastPage);
+                    }
+                }
+            }
+        }
+        #endregion
+
+        #region 新增：处理拖拽清除逻辑
+        /// <summary>
+        /// 当检测到UI上某个逻辑槽位被清空时（例如通过拖拽清除），
+        /// 如果当前QuickCast页面激活，则解除该槽位的绑定。
+        /// </summary>
+        /// <param name="logicalSlotIndex">被清空的逻辑槽位索引。</param>
+        public void UnbindSpellFromLogicalSlotIfActive(int logicalSlotIndex)
+        {
+            if (!_isQuickCastModeActive || _activeQuickCastPage == -1)
+            {
+                // Log($"[ABM UnbindSpell] QuickCast mode not active or no page selected. Ignoring unbind for slot {logicalSlotIndex}.\");
+                return;
+            }
+
+            if (logicalSlotIndex < 0 || logicalSlotIndex >= 12) // Assuming 12 managed slots
+            {
+                Log($"[ABM UnbindSpell] Invalid logical slot index {logicalSlotIndex} for unbinding.");
+                return;
+            }
+
+            var currentCharacterBindings = GetCurrentCharacterBindings(false); // false: don't create if missing
+            if (currentCharacterBindings != null && 
+                currentCharacterBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
+            {
+                if (bindingsForLevel.ContainsKey(logicalSlotIndex))
+                {
+                    string spellName = bindingsForLevel[logicalSlotIndex]?.Name ?? "Unknown Spell";
+                    bindingsForLevel.Remove(logicalSlotIndex);
+                    Log($"[ABM UnbindSpell] Spell '{spellName}' unbound from character {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName}, QuickCast page {_activeQuickCastPage}, logical slot {logicalSlotIndex} due to UI clear.");
+                    
+                    RefreshMainActionBarForCurrentQuickCastPage();
+                }
+                // else: Log($"[ABM UnbindSpell] No spell was bound to logical slot {logicalSlotIndex} on page {_activeQuickCastPage}. Nothing to unbind.");
+            }
+            // else: Log($"[ABM UnbindSpell] No bindings found for character or page {_activeQuickCastPage}. Nothing to unbind for slot {logicalSlotIndex}.");
+        }
+        #endregion
+
+        #region 新增：强制同步法术书显示环阶
+        private void ForceSyncSpellbookDisplayToPage(int targetLevel)
+        {
+            if (!_isQuickCastModeActive || targetLevel == -1) return;
+
+            var game = Game.Instance;
+            var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
+            var cachedView = _getActionBarPCView(); 
+            var spellsFieldInfo = _getSpellsGroupFieldInfo(); 
+
+            if (actionBarVM == null || cachedView == null || spellsFieldInfo == null)
+            {
+                Log($"[ABM ForceSyncSpellbookDisplay] Prerequisite VMs/Fields not available. Cannot sync spellbook to level {targetLevel}.");
+                return;
+            }
+
+            var currentUnit = actionBarVM.SelectedUnit.Value;
+            if (currentUnit == null)
+            {
+                Log($"[ABM ForceSyncSpellbookDisplay] No unit selected. Cannot sync spellbook.");
+                return;
+            }
+            
+            var spellbook = currentUnit.Descriptor?.Spellbooks?.FirstOrDefault();
+            if (spellbook == null || targetLevel > spellbook.MaxSpellLevel)
+            {
+                Log($"[ABM ForceSyncSpellbookDisplay] Unit {currentUnit.CharacterName} cannot use spell level {targetLevel}. Aborting sync.");
+                var spellsGroup = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
+                if (spellsGroup != null && spellsGroup.VisibleState) {
+                    // spellsGroup.SetVisible(false, true); // Potentially hide if level is invalid
+                }
+                return;
+            }
+
+            try
+            {
+                var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
+                if (spellsGroupInstance != null)
+                {
+                    if (!spellsGroupInstance.VisibleState)
+                    {
+                        if (currentUnit.Descriptor?.Spellbooks?.Any() == true) {
+                            spellsGroupInstance.SetVisible(true, true);
+                            Log($"[ABM ForceSyncSpellbookDisplay] Made m_SpellsGroup visible for level {targetLevel}.");
+                        }
+                    }
+
+                    if (actionBarVM.CurrentSpellLevel.Value != targetLevel)
+                    {
+                        Log($"[ABM ForceSyncSpellbookDisplay] Spellbook level mismatch (VM: {actionBarVM.CurrentSpellLevel.Value}, Expected: {targetLevel}). Forcing sync for unit {currentUnit.CharacterName}.");
+                        actionBarVM.CurrentSpellLevel.Value = targetLevel;
+                    }
+                }
+                else
+                {
+                    Log("[ABM ForceSyncSpellbookDisplay] m_SpellsGroup instance is null, cannot sync level.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[ABM ForceSyncSpellbookDisplay] Error during spellbook level sync: {ex.ToString()}");
+            }
         }
         #endregion
     }

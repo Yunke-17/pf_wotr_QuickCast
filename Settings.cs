@@ -16,28 +16,40 @@ namespace QuickCast
         // 返回主快捷栏的按键
         public KeyCode ReturnToMainKey = KeyCode.X;
         // 是否启用双击页面激活键返回主快捷栏的功能
-        public bool EnableDoubleTapToReturn = false; // 默认为 false
+        public bool EnableDoubleTapToReturn = true; // 默认为 true
         // 是否启用施法后自动返回主快捷栏的功能
-        public bool AutoReturnAfterCast = false; // 默认为 false
+        public bool AutoReturnAfterCast = true; // 默认为 true
         #endregion
 
         #region 构造函数与初始化
         // 构造函数，用于初始化设置的默认值
         public Settings()
         {
-            // 初始化绑定键数组，默认都为KeyCode.None (未绑定)
+            // 初始化绑定键数组，设置默认值
             if (BindKeysForLogicalSlots == null || BindKeysForLogicalSlots.Length != 12)
             {
                 BindKeysForLogicalSlots = new KeyCode[12];
-                for (int i = 0; i < BindKeysForLogicalSlots.Length; i++)
-                {
-                    BindKeysForLogicalSlots[i] = KeyCode.None;
-                }
             }
+            // 设置具体的默认绑定键
+            BindKeysForLogicalSlots[0] = KeyCode.Alpha1;
+            BindKeysForLogicalSlots[1] = KeyCode.Alpha2;
+            BindKeysForLogicalSlots[2] = KeyCode.Alpha3;
+            BindKeysForLogicalSlots[3] = KeyCode.Alpha4;
+            BindKeysForLogicalSlots[4] = KeyCode.Alpha5;
+            BindKeysForLogicalSlots[5] = KeyCode.Alpha6;
+            BindKeysForLogicalSlots[6] = KeyCode.None; // 默认不设置绑定键
+            BindKeysForLogicalSlots[7] = KeyCode.None; // 默认不设置绑定键
+            BindKeysForLogicalSlots[8] = KeyCode.None; // 默认不设置绑定键
+            BindKeysForLogicalSlots[9] = KeyCode.None; // 默认不设置绑定键
+            BindKeysForLogicalSlots[10] = KeyCode.None; // 默认不设置绑定键
+            BindKeysForLogicalSlots[11] = KeyCode.None; // 默认不设置绑定键
+
             // 初始化页面激活键数组的默认值
             if (PageActivation_Keys == null || PageActivation_Keys.Length != 11)
             {
                 PageActivation_Keys = new KeyCode[11];
+            }
+            // 设置/确认页面激活键默认值
                 PageActivation_Keys[0] = KeyCode.BackQuote; // 0环 (戏法)
                 PageActivation_Keys[1] = KeyCode.Alpha1;    // 1环
                 PageActivation_Keys[2] = KeyCode.Alpha2;    // 2环
@@ -49,8 +61,9 @@ namespace QuickCast
                 PageActivation_Keys[8] = KeyCode.W;         // 8环
                 PageActivation_Keys[9] = KeyCode.E;         // 9环
                 PageActivation_Keys[10] = KeyCode.R;        // 10环 (神话)
-            }
+            
             // ReturnToMainKey 已经在声明时初始化为 KeyCode.X
+            // EnableDoubleTapToReturn 和 AutoReturnAfterCast 已经在声明时初始化为 true
         }
         #endregion
 
