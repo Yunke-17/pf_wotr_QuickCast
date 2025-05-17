@@ -26,7 +26,7 @@ namespace QuickCast
             static void Postfix(ActionBarSlotVM __instance, bool state)
             {
                 // 仅当 QuickCast 模式激活且法术书UI可能可见时才监视悬停状态
-                if (Main.IsEnabled && Main._actionBarManager != null && Main._actionBarManager.IsQuickCastModeActive && Main.IsSpellbookInterfaceActive())
+                if (Main.IsEnabled && Main._actionBarManager != null && Main._actionBarManager.IsQuickCastModeActive && GameUIManager.IsSpellbookInterfaceActive())
                 {
                     // 检查此槽位VM是否可能来自法术书组（例如，具有有效的SpellLevel）
                     // 或者，检查其 MechanicActionBarSlot 是否为法术类型。

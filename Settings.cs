@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityModManagerNet;
+using System.Xml.Serialization;
 
 namespace QuickCast
 {
@@ -20,7 +21,9 @@ namespace QuickCast
         // 是否启用施法后自动返回主快捷栏的功能
         public bool AutoReturnAfterCast = true; // 默认为 true
         // 新增：详细日志开关
-        public bool EnableVerboseLogging = false; 
+        public bool EnableVerboseLogging { get; set; } = false;
+        // New setting for selected language
+        public string SelectedLanguage { get; set; } = ""; // Empty string means auto-detect or default
         #endregion
 
         #region 构造函数与初始化
