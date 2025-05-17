@@ -15,6 +15,7 @@ using Kingmaker.UnitLogic.Abilities;
 using Kingmaker.UI.UnitSettings;
 using Kingmaker.UnitLogic.Abilities.Blueprints;
 using Kingmaker.UnitLogic.Commands;
+using UnityEngine.UI;
 
 namespace QuickCast
 {
@@ -49,6 +50,9 @@ namespace QuickCast
         private readonly UnityModManager.ModEntry _modEntry;
         private readonly Func<ActionBarPCView> _getActionBarPCView;
         private readonly Func<FieldInfo> _getSpellsGroupFieldInfo;
+
+        // 新增：用于缓存 ActionBarGroupPCView.m_SlotsList 的 FieldInfo
+        private FieldInfo _slotsListFieldInfo_Cached = null;
 
         // 用于追踪主行动栏上最近被绑定的槽位的新静态字段
         public static readonly HashSet<int> RecentlyBoundSlotHashes = new HashSet<int>();
@@ -439,6 +443,28 @@ namespace QuickCast
                     RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
                 }
 
+                // 尝试获取和缓存 m_SlotsList FieldInfo (如果尚未缓存)
+                if (_slotsListFieldInfo_Cached == null)
+                {
+                    try
+                    {
+                        _slotsListFieldInfo_Cached = typeof(ActionBarGroupPCView).GetField("m_SlotsList", BindingFlags.NonPublic | BindingFlags.Instance);
+                        if (_slotsListFieldInfo_Cached != null)
+                        {
+                            Log("[ABM TryActivate] 成功获取并缓存了 m_SlotsList 的 FieldInfo。");
+                        }
+                        else
+                        {
+                            Log("[ABM TryActivate] 错误：未能获取 m_SlotsList 的 FieldInfo。调整法术书大小的功能将不可用。");
+                        }
+                    }
+                    catch (Exception ex_slotsListField)
+                    {
+                        Log($"[ABM TryActivate] 获取 m_SlotsList FieldInfo 时出错: {ex_slotsListField.Message}。调整法术书大小的功能将不可用。");
+                        _slotsListFieldInfo_Cached = null; // 确保出错时仍为null
+                    }
+                }
+                
                 Log("[ABM TryActivate] 尝试直接调用 m_SpellsGroup.SetVisible(true, true)。");
                 spellsGroupInstance.SetVisible(true, true); // 强制可见性
                 Log("[ABM TryActivate] 已调用 m_SpellsGroup.SetVisible(true, true)。");
@@ -469,6 +495,12 @@ namespace QuickCast
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message));
                 Log($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。");
 
+                // 应用法术书大小调整逻辑 (仅当快捷施法激活时)
+                if (spellsGroupInstance != null && spellbook != null) // spellbook is already checked earlier, but good for clarity
+                {
+                    AdaptQuickCastSpellbookUISize(spellsGroupInstance, spellbook, _activeQuickCastPage);
+                }
+
                 // 播放激活音效
                 if (Kingmaker.UI.UISoundController.Instance != null)
                 {
@@ -486,8 +518,107 @@ namespace QuickCast
             {
                 Log($"[ABM] TryActivateQuickCastMode 期间出错：{ex.ToString()}");
                 RestoreMainActionBarDisplay(); // 出错时恢复显示
+                // 尝试在出错时恢复法术书UI大小
+                var cachedViewForError = _getActionBarPCView();
+                var spellsFieldInfoForError = _getSpellsGroupFieldInfo();
+                if (cachedViewForError != null && spellsFieldInfoForError != null) {
+                    var spellsGroupInstanceForError = spellsFieldInfoForError.GetValue(cachedViewForError) as ActionBarGroupPCView;
+                    if (spellsGroupInstanceForError != null) {
+                        RestoreSpellbookUISizeToDefault(spellsGroupInstanceForError);
+                    }
+                }
                 _activeQuickCastPage = -1; _isQuickCastModeActive = false;
                 return false;
+            }
+        }
+
+        // 新增：调整快捷施法激活时法术书UI大小的方法
+        private void AdaptQuickCastSpellbookUISize(ActionBarGroupPCView spellsGroupInstance, Spellbook spellbook, int spellLevel)
+        {
+            if (_slotsListFieldInfo_Cached == null) // spellsGroupInstance and spellbook checked by caller
+            {
+                Log("[ABM AdaptSpellbook] m_SlotsList FieldInfo 尚未缓存，无法调整法术书大小。");
+                return;
+            }
+
+            try
+            {
+                var knownSpells = spellbook.GetKnownSpells(spellLevel);
+                int actualSpellCount = knownSpells?.Count ?? 0;
+                // Log($"[ABM AdaptSpellbook] 快捷施法激活，环阶 {spellLevel} 法术数量: {actualSpellCount}"); // 减少日志
+
+                var slotsListValue = _slotsListFieldInfo_Cached.GetValue(spellsGroupInstance);
+                if (slotsListValue is List<ActionBarBaseSlotPCView> spellSlotsPCList)
+                {
+                    int numberOfRowsNeeded = (actualSpellCount == 0) ? 1 : Mathf.CeilToInt((float)actualSpellCount / 5.0f);
+                    int totalSlotsToMakeVisibleInSpellbook = numberOfRowsNeeded * 5;
+                    
+                    // Log($"[ABM AdaptSpellbook] 法术书调整：需要行数 {numberOfRowsNeeded}, 总可见槽位 {totalSlotsToMakeVisibleInSpellbook}。当前m_SlotsList大小: {spellSlotsPCList.Count}"); // 减少日志
+
+                    for (int i = 0; i < spellSlotsPCList.Count; i++)
+                    {
+                        if (spellSlotsPCList[i] != null && spellSlotsPCList[i].gameObject != null)
+                        {
+                            bool shouldBeActive = i < totalSlotsToMakeVisibleInSpellbook;
+                            if (spellSlotsPCList[i].gameObject.activeSelf != shouldBeActive)
+                            {
+                                spellSlotsPCList[i].gameObject.SetActive(shouldBeActive);
+                            }
+                        }
+                    }
+                    LayoutRebuilder.ForceRebuildLayoutImmediate(spellsGroupInstance.transform as RectTransform);
+                    // Log($"[ABM AdaptSpellbook] 已调整快捷施法状态下的法术书UI大小并强制重新布局。"); // 减少日志
+                }
+                else
+                {
+                    Log("[ABM AdaptSpellbook] m_SlotsList 的值不是 List<ActionBarBaseSlotPCView>。");
+                }
+            }
+            catch (Exception ex_resize)
+            {
+                Log($"[ABM AdaptSpellbook] 调整法术书大小时出错: {ex_resize.ToString()}");
+            }
+        }
+
+        // 新增：恢复法术书UI大小到默认状态的方法
+        private void RestoreSpellbookUISizeToDefault(ActionBarGroupPCView spellsGroupInstance)
+        {
+            if (_slotsListFieldInfo_Cached == null || spellsGroupInstance == null)
+            {
+                Log("[ABM RestoreSpellbookUI] m_SlotsList FieldInfo 未缓存或 spellsGroupInstance 为空，无法恢复法术书UI大小。");
+                return;
+            }
+
+            try
+            {
+                var slotsListValue = _slotsListFieldInfo_Cached.GetValue(spellsGroupInstance);
+                if (slotsListValue is List<ActionBarBaseSlotPCView> spellSlotsPCList)
+                {
+                    bool changed = false;
+                    for (int i = 0; i < spellSlotsPCList.Count; i++)
+                    {
+                        if (spellSlotsPCList[i] != null && spellSlotsPCList[i].gameObject != null && !spellSlotsPCList[i].gameObject.activeSelf)
+                        {
+                            spellSlotsPCList[i].gameObject.SetActive(true);
+                            changed = true;
+                        }
+                    }
+
+                    if (changed)
+                    {
+                        LayoutRebuilder.ForceRebuildLayoutImmediate(spellsGroupInstance.transform as RectTransform);
+                        Log("[ABM RestoreSpellbookUI] 已尝试恢复法术书UI所有槽位为激活并强制重新布局。");
+                    }
+                    // else Log("[ABM RestoreSpellbookUI] 所有法术书槽位均已激活，无需恢复。"); // 减少日志
+                }
+                else
+                {
+                    Log("[ABM RestoreSpellbookUI] m_SlotsList 的值不是 List<ActionBarBaseSlotPCView>。");
+                }
+            }
+            catch (Exception ex_restore)
+            {
+                Log($"[ABM RestoreSpellbookUI] 恢复法术书大小时出错: {ex_restore.ToString()}");
             }
         }
 
@@ -509,6 +640,24 @@ namespace QuickCast
 
             var cachedView = _getActionBarPCView();
             var spellsFieldInfo = _getSpellsGroupFieldInfo(); // 这已在Main中缓存并传递给ABM构造函数
+
+            // 在隐藏法术书组之前，尝试恢复其UI大小
+            if (cachedView != null && spellsFieldInfo != null)
+            {
+                var spellsGroupInstanceForRestore = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
+                if (spellsGroupInstanceForRestore != null)
+                {
+                    RestoreSpellbookUISizeToDefault(spellsGroupInstanceForRestore);
+                }
+                else
+                {
+                    Log("[ABM TryDeactivate] 无法获取 spellsGroupInstance 以恢复UI大小。");
+                }
+            }
+            else
+            {
+                Log("[ABM TryDeactivate] cachedView 或 spellsFieldInfo 为空，无法恢复法术书UI大小。");
+            }
 
             if (cachedView != null && spellsFieldInfo != null)
             {
