@@ -293,6 +293,9 @@ namespace QuickCast
             DrawBehaviorSettings();
             GUILayout.Space(20);
 
+            DrawDebugSettings();
+            GUILayout.Space(20);
+
             DrawResetToDefaultsButton();
             GUILayout.Space(20);
 
@@ -628,6 +631,21 @@ namespace QuickCast
             Settings.AutoReturnAfterCast = GUILayout.Toggle(Settings.AutoReturnAfterCast, "施法启动后自动返回主快捷栏");
         }
 
+        // 新增方法：绘制调试设置区域
+        private static void DrawDebugSettings()
+        {
+            GUILayout.Label("调试设置 (Debugging Settings):", GUILayout.ExpandWidth(false));
+            GUILayout.Space(5);
+            if (Settings != null) // 添加空检查以确保安全
+            {
+                Settings.EnableVerboseLogging = GUILayout.Toggle(Settings.EnableVerboseLogging, "启用详细日志 (用于调试，可能影响游戏性能)");
+            }
+            else
+            {
+                GUILayout.Label("<color=red>错误：设置实例为空，无法显示调试选项。</color>");
+            }
+        }
+
         // 新增方法：绘制重置为默认值按钮
         private static void DrawResetToDefaultsButton()
         {
@@ -656,6 +674,7 @@ namespace QuickCast
                     Settings.ReturnToMainKey = temporaryDefaultSettings.ReturnToMainKey;
                     Settings.EnableDoubleTapToReturn = temporaryDefaultSettings.EnableDoubleTapToReturn;
                     Settings.AutoReturnAfterCast = temporaryDefaultSettings.AutoReturnAfterCast;
+                    Settings.EnableVerboseLogging = temporaryDefaultSettings.EnableVerboseLogging; // 确保重置时也包含此项
 
                     Log("[Main OnGUI] 设置已重置为推荐默认值。");
                     // ModEntry.ModSettings.Save(ModEntry); // 可选：立即保存，或者让用户手动保存

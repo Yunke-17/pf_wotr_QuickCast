@@ -19,6 +19,8 @@ namespace QuickCast
         public bool EnableDoubleTapToReturn = true; // 默认为 true
         // 是否启用施法后自动返回主快捷栏的功能
         public bool AutoReturnAfterCast = true; // 默认为 true
+        // 新增：详细日志开关
+        public bool EnableVerboseLogging = false; 
         #endregion
 
         #region 构造函数与初始化
@@ -64,6 +66,7 @@ namespace QuickCast
             
             // ReturnToMainKey 已经在声明时初始化为 KeyCode.X
             // EnableDoubleTapToReturn 和 AutoReturnAfterCast 已经在声明时初始化为 true
+            EnableVerboseLogging = false; // 显式初始化
         }
         #endregion
 
