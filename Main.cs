@@ -160,6 +160,10 @@ namespace QuickCast
             EventBus.Subscribe(_actionBarManager); // Subscribe ActionBarManager to EventBus
             Log("ActionBarManager 已订阅 EventBus。");
 
+            // Mod加载完成后，尝试加载角色绑定信息
+            ActionBarManager.LoadBindings(ModEntry);
+            Log("已尝试加载快捷施法角色绑定。");
+
             Log("QuickCast Mod Load 方法完成。");
             return true; 
         }
@@ -180,6 +184,9 @@ namespace QuickCast
                     // Unsubscribe when mod is disabled
                     EventBus.Unsubscribe(_actionBarManager); 
                     Log("ActionBarManager 已从 EventBus 取消订阅 (Mod 禁用).");
+                    // Mod禁用时保存绑定信息
+                    ActionBarManager.SaveBindings(ModEntry);
+                    Log("尝试在Mod禁用时保存绑定信息。");
                 }
                  _previousSpellbookActiveAndInteractableState = null; 
             }
@@ -295,6 +302,8 @@ namespace QuickCast
         private static void OnSaveGUI(UnityModManager.ModEntry modEntry)
         {
             Settings.Save(modEntry); 
+            ActionBarManager.SaveBindings(modEntry); // 保存Mod设置时也保存绑定信息
+            Log("已在OnSaveGUI中尝试保存快捷施法角色绑定。");
         }
         #endregion
 
@@ -440,6 +449,7 @@ namespace QuickCast
                 {
                     Log($"[QC Input] 尝试绑定：配置的绑定键 {configuredBindKey} (用于槽位 {i}) 已按下。悬停：{hoveredAbility.Name}。QC 页面：{_actionBarManager.ActiveQuickCastPage}");
                     _actionBarManager.BindSpellToLogicalSlot(_actionBarManager.ActiveQuickCastPage, i, hoveredAbility);
+                    ActionBarManager.SaveBindings(ModEntry); // 绑定后立即保存
                     return true; 
                 }
             }

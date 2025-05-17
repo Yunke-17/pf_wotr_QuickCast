@@ -41,9 +41,8 @@ namespace QuickCast
         // private readonly List<int> _mainBarManagedSlotIndices; // 不再需要此字段
 
         // 原来的静态绑定字典，现在改为按角色ID存储
-        // private static Dictionary<int, Dictionary<int, AbilityData>> QuickCastBindings = new Dictionary<int, Dictionary<int, AbilityData>>();
-        // 改为：Key: Character UniqueId (string), Value: Dictionary<int spellLevel, Dictionary<int logicalSlotIndex, AbilityData spell>>
-        private static Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>> PerCharacterQuickCastBindings = new Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>>();
+        // 改为：Key: Character UniqueId (string), Value: Dictionary<int spellLevel, Dictionary<int logicalSlotIndex, string spellBlueprintGuid>>
+        private static Dictionary<string, Dictionary<int, Dictionary<int, string>>> PerCharacterQuickCastSpellIds = new Dictionary<string, Dictionary<int, Dictionary<int, string>>>();
 
         private readonly MechanicActionBarSlotEmpty _emptySlotPlaceholder;
 
@@ -72,13 +71,13 @@ namespace QuickCast
             // _mainBarManagedSlotIndices = new List<int> { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 }; // 不再需要初始化此字段
             // 如果需要管理主快捷栏上更多的槽位（例如对应按键7,8,9,0,-,=的槽位6-11），请扩展此列表。
 
-            // 初始化 QuickCastBindings - 目前为空。
+            // 初始化 PerCharacterQuickCastSpellIds - 目前为空。
             // 在实际场景中，这将从存档文件或UMM设置中加载。
-            if (PerCharacterQuickCastBindings == null)
+            if (PerCharacterQuickCastSpellIds == null)
             {
-                PerCharacterQuickCastBindings = new Dictionary<string, Dictionary<int, Dictionary<int, AbilityData>>>();
+                PerCharacterQuickCastSpellIds = new Dictionary<string, Dictionary<int, Dictionary<int, string>>>();
             }
-            // TODO: 如果需要，可以在开发过程中向QuickCastBindings添加测试数据
+            // TODO: 如果需要，可以在开发过程中向PerCharacterQuickCastSpellIds添加测试数据
             // 新结构的示例:
             // if (!QuickCastBindings.ContainsKey(1)) QuickCastBindings[1] = new Dictionary<int, AbilityData>();
             // QuickCastBindings[1][0] = someDummyAbilityDataForLevel1Slot0; // 槽位0对应Alpha1
@@ -178,12 +177,12 @@ namespace QuickCast
             Log($"[ABM] 正在为快捷施法页面 {_activeQuickCastPage} 刷新主行动栏。");
 
             // 获取当前角色的绑定数据
-            var currentCharacterBindings = GetCurrentCharacterBindings(false); // false: 不需要创建新条目，如果不存在则表示没有绑定
-            Dictionary<int, AbilityData> currentLevelBindings = null;
+            var currentCharacterSpellIdBindings = GetCurrentCharacterBindings(false); // false: 不需要创建新条目，如果不存在则表示没有绑定
+            Dictionary<int, string> currentLevelSpellIdBindings = null;
 
-            if (currentCharacterBindings != null && currentCharacterBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
+            if (currentCharacterSpellIdBindings != null && currentCharacterSpellIdBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
             {
-                currentLevelBindings = bindingsForLevel;
+                currentLevelSpellIdBindings = bindingsForLevel;
                 Log($"[ABM] 已找到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 等级 {_activeQuickCastPage} 的绑定数据。");
             }
             else
@@ -208,7 +207,10 @@ namespace QuickCast
                     {
                         AbilityData boundAbility = null;
                         // 尝试从 currentLevelBindings 中获取当前 logicalSlotIndex 的绑定法术
-                        currentLevelBindings?.TryGetValue(logicalSlotIndexToRefresh, out boundAbility);
+                        if (currentLevelSpellIdBindings != null && currentLevelSpellIdBindings.TryGetValue(logicalSlotIndexToRefresh, out string spellGuid))
+                        {
+                            boundAbility = GetAbilityDataFromSpellGuid(currentUnit, spellGuid);
+                        }
 
                         if (boundAbility != null)
                         {
@@ -256,23 +258,26 @@ namespace QuickCast
             var currentCharacterBindings = GetCurrentCharacterBindings(true); // true: 如果角色没有绑定，则创建
             if (currentCharacterBindings == null)
             {
-                Log("[ABM] BindSpellToLogicalSlot：无法获取或创建角色绑定。可能是因为没有选中角色。绑定失败。");
+                Log("[ABM BindSpellToLogicalSlot：无法获取或创建角色绑定。可能是因为没有选中角色。绑定失败。");
                 return;
             }
 
             if (!currentCharacterBindings.ContainsKey(spellLevel))
             {
-                currentCharacterBindings[spellLevel] = new Dictionary<int, AbilityData>();
+                currentCharacterBindings[spellLevel] = new Dictionary<int, string>();
             }
-            currentCharacterBindings[spellLevel][logicalSlotIndex] = spellData;
-            Log($"[ABM] 法术 '{spellData.Name}' 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
+            currentCharacterBindings[spellLevel][logicalSlotIndex] = spellData.Blueprint.AssetGuidThreadSafe; // 存储 GUID
+            Log($"[ABM] 法术GUID '{spellData.Blueprint.AssetGuidThreadSafe}' ({spellData.Name}) 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
 
             Log($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
-            if (GetCurrentCharacterBindings(false) != null)
+            var currentSpellIdBindingsForLogging = GetCurrentCharacterBindings(false); // 获取字符串ID的绑定用于记录
+            if (currentSpellIdBindingsForLogging != null && currentSpellIdBindingsForLogging.TryGetValue(spellLevel, out var levelBindingsToLog))
             {
-                foreach (var kvp in GetCurrentCharacterBindings(false)[spellLevel])
+                foreach (var kvp in levelBindingsToLog)
                 {
-                    Log($"[ABM BindDetails]   逻辑槽位：{kvp.Key}, 法术：{kvp.Value?.Name ?? "NULL"}");
+                    // 为了记录法术名称，我们需要从GUID获取AbilityData，这可能有点多余，但对于调试有帮助
+                    var spellForLog = GetAbilityDataFromSpellGuid(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, kvp.Value);
+                    Log($"[ABM BindDetails]   逻辑槽位：{kvp.Key}, 法术GUID：{kvp.Value}, 法术名：{spellForLog?.Name ?? "NULL/Unknown"}");
                 }
             }
             else
@@ -356,6 +361,19 @@ namespace QuickCast
                 if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true);
                 else { _activeQuickCastPage = -1; _isQuickCastModeActive = false; }
                 return false;
+            }
+
+            // 在激活新页面之前，获取当前角色的绑定数据
+            var currentCharacterSpellIdBindings = GetCurrentCharacterBindings(false); // false: 不需要创建，如果不存在，则表示没有绑定
+
+            // 对获取到的绑定进行验证和清理
+            if (currentCharacterSpellIdBindings != null) // 只有在实际存在绑定时才进行验证
+            {
+                Log($"[ABM TryActivate] Validating existing bindings for unit {currentUnit.CharacterName} before activating page {spellLevel}.");
+                ValidateAndCleanupBindings(currentUnit, currentCharacterSpellIdBindings); 
+                // ValidateAndCleanupBindings 内部会处理保存（如果发生更改）
+                // 重新获取绑定，因为 ValidateAndCleanupBindings 可能会修改它
+                currentCharacterSpellIdBindings = GetCurrentCharacterBindings(false);
             }
 
             // 如果已处于快捷施法模式，则恢复先前的状态
@@ -716,30 +734,30 @@ namespace QuickCast
             }
         }
 
-        // 辅助方法：获取当前选中角色的绑定数据字典
+        // 辅助方法：获取当前选中角色的绑定数据字典 (GUIDs)
         // 如果不存在该角色的绑定数据且 createIfMissing 为 true，则为其创建一个新的空字典
-        private Dictionary<int, Dictionary<int, AbilityData>> GetCurrentCharacterBindings(bool createIfMissing = false)
+        private Dictionary<int, Dictionary<int, string>> GetCurrentCharacterBindings(bool createIfMissing = false)
         {
             var selectedUnit = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter;
             if (selectedUnit == null || selectedUnit.UniqueId == null)
             {
                 Log("[ABM GetCurrentCharacterBindings] Error: No selected unit or unit UniqueId is null.");
-                return null; // 或者返回一个临时的空字典，取决于后续逻辑如何处理
+                return null;
             }
 
             string charId = selectedUnit.UniqueId;
-            if (!PerCharacterQuickCastBindings.TryGetValue(charId, out var bindings))
+            if (!PerCharacterQuickCastSpellIds.TryGetValue(charId, out var bindings))
             {
                 if (createIfMissing)
                 {
-                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Creating new binding set.");
-                    bindings = new Dictionary<int, Dictionary<int, AbilityData>>();
-                    PerCharacterQuickCastBindings[charId] = bindings;
+                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Creating new binding set (for spell GUIDs).");
+                    bindings = new Dictionary<int, Dictionary<int, string>>();
+                    PerCharacterQuickCastSpellIds[charId] = bindings;
                 }
                 else
                 {
-                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Not creating new set.");
-                    return null; // 或者返回一个临时的空字典
+                    Log($"[ABM GetCurrentCharacterBindings] No bindings found for character {selectedUnit.CharacterName} ({charId}). Not creating new set (for spell GUIDs).");
+                    return null;
                 }
             }
             return bindings;
@@ -872,16 +890,25 @@ namespace QuickCast
                 }
                 else
                 {
-                var spellbook = currentSelectedCharacter.Descriptor?.Spellbooks?.FirstOrDefault();
-                if (spellbook == null || _pageToRestoreDeferred > spellbook.MaxSpellLevel)
-                {
+                    // 在尝试激活之前，验证并清理当前选中角色的绑定
+                    var bindingsToValidate = GetCurrentCharacterBindings(false);
+                    if (bindingsToValidate != null)
+                    {
+                        Log($"[ABM Update] Validating bindings for {currentSelectedCharacter.CharacterName} before deferred restore.");
+                        ValidateAndCleanupBindings(currentSelectedCharacter, bindingsToValidate);
+                        // ValidateAndCleanupBindings 内部会保存更改
+                    }
+
+                    var spellbook = currentSelectedCharacter.Descriptor?.Spellbooks?.FirstOrDefault();
+                    if (spellbook == null || _pageToRestoreDeferred > spellbook.MaxSpellLevel)
+                    {
                         Log($"[ABM Update] Deferred dialog restore for page {_pageToRestoreDeferred} cancelled: Unit {currentSelectedCharacter.CharacterName} cannot use this spell level.");
                         if (_isQuickCastModeActive) TryDeactivateQuickCastMode(true); // Should not be active
                     }
                     else
                     {
                         Log($"[ABM Update] Executing deferred dialog restore for page: {_pageToRestoreDeferred} for unit {currentSelectedCharacter.CharacterName}. This will attempt to activate QuickCast.");
-                TryActivateQuickCastMode(_pageToRestoreDeferred, false);
+                        TryActivateQuickCastMode(_pageToRestoreDeferred, false);
                     }
                 }
                 _deferredRestoreQueued = false;
@@ -946,11 +973,15 @@ namespace QuickCast
             {
                 if (bindingsForLevel.ContainsKey(logicalSlotIndex))
                 {
-                    string spellName = bindingsForLevel[logicalSlotIndex]?.Name ?? "Unknown Spell";
+                    string spellGuidToRemove = bindingsForLevel[logicalSlotIndex];
+                    string spellName = GetAbilityDataFromSpellGuid(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, spellGuidToRemove)?.Name ?? $"Unknown Spell (GUID: {spellGuidToRemove})";
+                    
                     bindingsForLevel.Remove(logicalSlotIndex);
                     Log($"[ABM UnbindSpell] Spell '{spellName}' unbound from character {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName}, QuickCast page {_activeQuickCastPage}, logical slot {logicalSlotIndex} due to UI clear.");
                     
                     RefreshMainActionBarForCurrentQuickCastPage();
+                    // 解绑后保存绑定信息
+                    SaveBindings(Main.ModEntry); // 假设Main.ModEntry可以这样访问，如果不行，需要传递ModEntry
                 }
                 // else: Log($"[ABM UnbindSpell] No spell was bound to logical slot {logicalSlotIndex} on page {_activeQuickCastPage}. Nothing to unbind.");
             }
@@ -1020,6 +1051,185 @@ namespace QuickCast
             {
                 Log($"[ABM ForceSyncSpellbookDisplay] Error during spellbook level sync: {ex.ToString()}");
             }
+        }
+        #endregion
+
+        // 新增：辅助方法，用于从法术蓝图GUID获取AbilityData
+        private AbilityData GetAbilityDataFromSpellGuid(UnitEntityData unit, string spellGuid)
+        {
+            if (unit == null || string.IsNullOrEmpty(spellGuid) || unit.Descriptor == null)
+            {
+                return null;
+            }
+
+            foreach (var spellbook in unit.Descriptor.Spellbooks)
+            {
+                // 2. 处理准备施法者 (MemorizeSpells == true)
+                if (spellbook.Blueprint.MemorizeSpells)
+                {
+                    for (int spellLevel = 0; spellLevel <= spellbook.MaxSpellLevel; spellLevel++)
+                    {
+                        var memorizedSlots = spellbook.GetMemorizedSpellSlots(spellLevel);
+                        foreach (var slot in memorizedSlots)
+                        {
+                            // 关键更改：只检查法术蓝图是否匹配，不检查slot.Available或SpellShell.IsAvailableForCast
+                            // 因为我们关心的是法术是否还"被准备着"，而不是当天是否还有次数。
+                            if (slot.SpellShell != null && slot.SpellShell.Blueprint.AssetGuidThreadSafe == spellGuid)
+                            {
+                                // Log($"[ABM GetAbilityData PREPARED] Found prepared spell with GUID {spellGuid} for unit {unit.CharacterName}.");
+                                return slot.SpellShell; 
+                            }
+                        }
+                    }
+                }
+                // 3. 处理自发施法者 (Spontaneous == true)
+                else if (spellbook.Blueprint.Spontaneous)
+                {
+                    // 关键更改：只检查法术是否已知，不检查ability.IsAvailableForCast
+                    // 因为我们关心的是法术是否还"已知"，而不是当天是否还有次数。
+                    var ability = spellbook.GetAllKnownSpells().FirstOrDefault(a => a.Blueprint.AssetGuidThreadSafe == spellGuid);
+                    if (ability != null) 
+                    {
+                        // Log($"[ABM GetAbilityData SPONTANEOUS] Found known spell with GUID {spellGuid} for unit {unit.CharacterName}.");
+                        return ability;
+                    }
+                }
+            }
+
+            // Log($"[ABM GetAbilityData] Unit {unit.CharacterName} 中未找到与 GUID {spellGuid} 匹配的已知或已准备的 AbilityData。");
+            return null;
+        }
+
+        #region Data Persistence (Save/Load Bindings)
+        private const string BindingsFileName = "QuickCastCharacterBindings.json";
+
+        public static void SaveBindings(UnityModManager.ModEntry modEntry)
+        {
+            if (modEntry == null || string.IsNullOrEmpty(modEntry.Path))
+            {
+                Debug.LogError("[QuickCast ABM SaveBindings] ModEntry or ModEntry.Path is null. Cannot determine save path.");
+                return;
+            }
+
+            string filePath = System.IO.Path.Combine(modEntry.Path, BindingsFileName);
+            try
+            {
+                string json = Newtonsoft.Json.JsonConvert.SerializeObject(PerCharacterQuickCastSpellIds, Newtonsoft.Json.Formatting.Indented);
+                System.IO.File.WriteAllText(filePath, json);
+                // Log($"[ABM SaveBindings] Successfully saved bindings to {filePath}"); // 避免过多日志，除非调试
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[QuickCast ABM SaveBindings] Error saving bindings to {filePath}: {ex.ToString()}");
+            }
+        }
+
+        public static void LoadBindings(UnityModManager.ModEntry modEntry)
+        {
+            if (modEntry == null || string.IsNullOrEmpty(modEntry.Path))
+            {
+                Debug.LogError("[QuickCast ABM LoadBindings] ModEntry or ModEntry.Path is null. Cannot determine load path.");
+                return;
+            }
+
+            string filePath = System.IO.Path.Combine(modEntry.Path, BindingsFileName);
+            if (System.IO.File.Exists(filePath))
+            {
+                try
+                {
+                    string json = System.IO.File.ReadAllText(filePath);
+                    var loadedBindings = Newtonsoft.Json.JsonConvert.DeserializeObject<Dictionary<string, Dictionary<int, Dictionary<int, string>>>>(json);
+                    if (loadedBindings != null)
+                    {
+                        PerCharacterQuickCastSpellIds = loadedBindings;
+                        // Log($"[ABM LoadBindings] Successfully loaded bindings from {filePath}"); // 避免过多日志
+                    }
+                    else
+                    {
+                        Debug.LogWarning($"[QuickCast ABM LoadBindings] Deserialized bindings from {filePath} are null. Using new/empty bindings.");
+                        PerCharacterQuickCastSpellIds = new Dictionary<string, Dictionary<int, Dictionary<int, string>>>(); // Ensure it's not null
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogError($"[QuickCast ABM LoadBindings] Error loading bindings from {filePath}: {ex.ToString()}. Using new/empty bindings.");
+                    PerCharacterQuickCastSpellIds = new Dictionary<string, Dictionary<int, Dictionary<int, string>>>(); // Ensure it's not null on error
+                }
+            }
+            else
+            {
+                // Log($"[ABM LoadBindings] Bindings file {filePath} not found. Starting with new/empty bindings."); // 首次启动时正常
+                PerCharacterQuickCastSpellIds = new Dictionary<string, Dictionary<int, Dictionary<int, string>>>(); // Ensure it's not null if file doesn't exist
+            }
+        }
+        #endregion
+
+        #region Binding Validation
+        /// <summary>
+        /// Validates the spell bindings for a given unit, removing any that are no longer valid (e.g., spell not known or available).
+        /// </summary>
+        /// <param name="unit">The unit whose bindings are being validated.</param>
+        /// <param name="characterSpellIdBindings">The dictionary of spell ID bindings for the unit.</param>
+        /// <returns>True if any bindings were cleaned up, false otherwise.</returns>
+        private bool ValidateAndCleanupBindings(UnitEntityData unit, Dictionary<int, Dictionary<int, string>> characterSpellIdBindings)
+        {
+            if (unit == null || characterSpellIdBindings == null)
+            {
+                Log("[ABM ValidateBindings] Unit or bindings dictionary is null. Skipping validation.");
+                return false;
+            }
+
+            bool bindingsChanged = false;
+            List<Tuple<int, int>> bindingsToRemove = new List<Tuple<int, int>>(); // spellLevel, logicalSlot
+
+            Log($"[ABM ValidateBindings] Validating bindings for unit {unit.CharacterName}...");
+
+            foreach (var levelEntry in characterSpellIdBindings)
+            {
+                int spellLevel = levelEntry.Key;
+                var slotBindings = levelEntry.Value;
+                List<int> slotsInLevelToRemove = new List<int>();
+
+                foreach (var slotEntry in slotBindings)
+                {
+                    int logicalSlot = slotEntry.Key;
+                    string spellGuid = slotEntry.Value;
+
+                    AbilityData ability = GetAbilityDataFromSpellGuid(unit, spellGuid);
+                    if (ability == null) // Spell is no longer valid/available for this unit
+                    {
+                        Log($"[ABM ValidateBindings] Invalid binding found for unit {unit.CharacterName}: Level {spellLevel}, Slot {logicalSlot}, Spell GUID {spellGuid}. Marking for removal.");
+                        // Cannot modify collection while iterating, so mark for removal
+                        bindingsToRemove.Add(Tuple.Create(spellLevel, logicalSlot)); 
+                        bindingsChanged = true;
+                    }
+                }
+            }
+
+            // Perform removals
+            foreach (var itemToRemove in bindingsToRemove)
+            {
+                if (characterSpellIdBindings.TryGetValue(itemToRemove.Item1, out var slotsInLevel))
+                {
+                    slotsInLevel.Remove(itemToRemove.Item2);
+                    if (slotsInLevel.Count == 0)
+                    {
+                        characterSpellIdBindings.Remove(itemToRemove.Item1);
+                    }
+                }
+            }
+
+            if (bindingsChanged)
+            {
+                Log($"[ABM ValidateBindings] Finished validation for {unit.CharacterName}. Bindings were modified.");
+                SaveBindings(Main.ModEntry); // Save changes if any bindings were removed
+            }
+            else
+            {
+                Log($"[ABM ValidateBindings] Finished validation for {unit.CharacterName}. No bindings were modified.");
+            }
+
+            return bindingsChanged;
         }
         #endregion
     }
