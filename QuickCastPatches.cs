@@ -74,18 +74,18 @@ namespace QuickCast
                     bool isRecentlyBoundByMod = ActionBarManager.RecentlyBoundSlotHashes.Contains(qcSpellSlot.GetHashCode()) &&
                                                 Time.frameCount == ActionBarManager.FrameOfLastBindingRefresh;
 
-                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有QC法术的槽位触发：{qcSpellSlot.Spell?.Name}。哈希值：{qcSpellSlot.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
+                    Main.LogDebug($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有QC法术的槽位触发：{qcSpellSlot.Spell?.Name}。哈希值：{qcSpellSlot.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
 
                     if (isRecentlyBoundByMod)
                     {
-                        Main.Log($"[Patch VMClickPrefix] 禁止 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick，因为它在此帧被 QuickCast 最近绑定。测试");
+                        Main.LogDebug($"[Patch VMClickPrefix] 禁止 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick，因为它在此帧被 QuickCast 最近绑定。测试");
                         return false; // 禁止原始 OnMainClick
                     }
-                    Main.Log($"[Patch VMClickPrefix] 继续执行 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick。");
+                    Main.LogDebug($"[Patch VMClickPrefix] 继续执行 QC 法术 {qcSpellSlot.Spell?.Name} (哈希值：{qcSpellSlot.GetHashCode()}) 的 ActionBarSlotVM.OnMainClick。");
                 }
                 else
                 {
-                    Main.Log($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有非QC内容类型的槽位触发：{__instance.MechanicActionBarSlot?.GetType().Name}。继续执行。");
+                    Main.LogDebug($"[Patch VMClickPrefix] ActionBarSlotVM.OnMainClick 为带有非QC内容类型的槽位触发：{__instance.MechanicActionBarSlot?.GetType().Name}。继续执行。");
                 }
                 return true; // 对于其他槽位类型或如果不是最近绑定的，则继续执行原始 OnMainClick
             }
@@ -102,19 +102,19 @@ namespace QuickCast
                 bool isRecentlyBoundByMod = ActionBarManager.RecentlyBoundSlotHashes.Contains(__instance.GetHashCode()) &&
                                             Time.frameCount == ActionBarManager.FrameOfLastBindingRefresh;
 
-                Main.Log($"[Patch MechClickPrefix] 为法术触发：{__instance.Spell?.Name}。哈希值：{__instance.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
+                Main.LogDebug($"[Patch MechClickPrefix] 为法术触发：{__instance.Spell?.Name}。哈希值：{__instance.GetHashCode()}。是否最近绑定：{isRecentlyBoundByMod} (帧：{Time.frameCount}, 上次绑定帧：{ActionBarManager.FrameOfLastBindingRefresh})");
 
                 if (Main.CurrentlyHoveredSpellbookSlotVM != null && Main.CurrentlyHoveredSpellbookSlotVM.MechanicActionBarSlot == __instance)
                 {
-                    Main.Log($"[Patch MechClickPrefix] 点击的实例是当前悬停的法术书槽位：{__instance.Spell?.Name}。这很可能是在法术书中点击。");
+                    Main.LogDebug($"[Patch MechClickPrefix] 点击的实例是当前悬停的法术书槽位：{__instance.Spell?.Name}。这很可能是在法术书中点击。");
                 }
 
                 if (isRecentlyBoundByMod)
                 {
-                    Main.Log($"[Patch MechClickPrefix] 禁止 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的 OnClick，因为它在此帧被 QuickCast 最近绑定。");
+                    Main.LogDebug($"[Patch MechClickPrefix] 禁止 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的 OnClick，因为它在此帧被 QuickCast 最近绑定。");
                     return false;
                 }
-                Main.Log($"[Patch MechClickPrefix] 继续执行 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的原始 OnClick。");
+                Main.LogDebug($"[Patch MechClickPrefix] 继续执行 {__instance.Spell?.Name} (哈希值：{__instance.GetHashCode()}) 的原始 OnClick。");
                 return true;
             }
         }
@@ -135,7 +135,7 @@ namespace QuickCast
 
                     if (__instance.Executor == markedCaster && __instance.Ability?.Blueprint == markedAbilityBlueprint)
                     {
-                        Main.Log($"[UnitUseAbility_OnEnded_Patch] Spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} finished successfully. Triggering auto-return.");
+                        Main.LogDebug($"[UnitUseAbility_OnEnded_Patch] Spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} finished successfully. Triggering auto-return.");
                         Main._actionBarManager?.TryDeactivateQuickCastMode(); 
                     }
                     ActionBarManager.SpellCastToAutoReturn = null; 
@@ -146,7 +146,7 @@ namespace QuickCast
                     var markedAbilityBlueprint = ActionBarManager.SpellCastToAutoReturn.Item2;
                     if (__instance.Executor == markedCaster && __instance.Ability?.Blueprint == markedAbilityBlueprint)
                     {
-                        Main.Log($"[UnitUseAbility_OnEnded_Patch] Marked spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} did not succeed ({__instance.Result}). Clearing auto-return mark.");
+                        Main.LogDebug($"[UnitUseAbility_OnEnded_Patch] Marked spell {markedAbilityBlueprint.name} by {markedCaster.CharacterName} did not succeed ({__instance.Result}). Clearing auto-return mark.");
                         ActionBarManager.SpellCastToAutoReturn = null;
                     }
                 }
@@ -181,7 +181,7 @@ namespace QuickCast
                             var gameActionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
                             if (gameActionBarVM != null && gameActionBarVM.Slots.Contains(__instance))
                             {
-                                Main.Log($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} in QuickCast mode was emptied (new type: {abs?.GetType().Name ?? "null"}). Attempting to unbind.");
+                                Main.LogDebug($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} in QuickCast mode was emptied (new type: {abs?.GetType().Name ?? "null"}). Attempting to unbind.");
                                 Main._actionBarManager.UnbindSpellFromLogicalSlotIfActive(slotIndex);
                             }
                             // else: Log("[Patch SetMechanicSlot Postfix] Slot {slotIndex} was emptied, but it doesn't seem to be part of the main action bar VM currently.");

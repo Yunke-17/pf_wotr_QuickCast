@@ -50,7 +50,7 @@ namespace QuickCast
         {
             if (!GameUIManager.EnsureCachedActionBarView() || GameUIManager.CachedActionBarPCView == null)
             {
-                Main.Log("[InputManager ProcessPageActivationKeys] ActionBarPCView 尚未成功缓存，跳过页面激活处理。");
+                Main.LogDebug("[InputManager ProcessPageActivationKeys] ActionBarPCView 尚未成功缓存，跳过页面激活处理。");
                 return;
             }
 
@@ -61,20 +61,20 @@ namespace QuickCast
 
                 if (Input.GetKeyDown(pageKey))
                 {
-                    Main.Log($"[QC Input SUCCESS] Ctrl + {pageKey} (对应法术等级 {spellLevel}) 已检测到！");
+                    Main.LogDebug($"[QC Input SUCCESS] Ctrl + {pageKey} (对应法术等级 {spellLevel}) 已检测到！");
                     if (Main.Settings.EnableDoubleTapToReturn &&
                         Main._actionBarManager.IsQuickCastModeActive &&
                         Main._actionBarManager.ActiveQuickCastPage == spellLevel &&
                         pageKey == _lastPageActivationKeyPressed &&
                         (Time.time - _lastPageActivationKeyPressTime) < DoubleTapTimeThreshold)
                     {
-                        Main.Log($"[QC Input] 在活动页面键 {pageKey} 上检测到双击。返回主快捷栏。");
+                        Main.LogDebug($"[QC Input] 在活动页面键 {pageKey} 上检测到双击。返回主快捷栏。");
                         Main._actionBarManager.TryDeactivateQuickCastMode();
                         _lastPageActivationKeyPressed = KeyCode.None;
                     }
                     else
                     {
-                        Main.Log($"[QC Input] 尝试调用 _actionBarManager.TryActivateQuickCastMode({spellLevel}, false)");
+                        Main.LogDebug($"[QC Input] 尝试调用 _actionBarManager.TryActivateQuickCastMode({spellLevel}, false)");
                         Main._actionBarManager.TryActivateQuickCastMode(spellLevel, false);
                         _lastPageActivationKeyPressed = pageKey;
                         _lastPageActivationKeyPressTime = Time.time;
@@ -87,7 +87,7 @@ namespace QuickCast
         private static bool ProcessBindingKeys()
         {
             if (GameUIManager.CachedActionBarPCView == null && !GameUIManager.EnsureCachedActionBarView()) {
-                 Main.Log("[InputManager ProcessBindingKeys] ActionBarPCView 尚未成功缓存，跳过绑定处理。");
+                 Main.LogDebug("[InputManager ProcessBindingKeys] ActionBarPCView 尚未成功缓存，跳过绑定处理。");
                 return false;
             }
 
@@ -104,7 +104,7 @@ namespace QuickCast
                 KeyCode configuredBindKey = Main.Settings.BindKeysForLogicalSlots[i];
                 if (configuredBindKey != KeyCode.None && Input.GetKeyDown(configuredBindKey))
                 {
-                    Main.Log($"[QC Input] 尝试绑定：配置的绑定键 {configuredBindKey} (用于槽位 {i}) 已按下。悬停：{hoveredAbility.Name}。QC 页面：{Main._actionBarManager.ActiveQuickCastPage}");
+                    Main.LogDebug($"[QC Input] 尝试绑定：配置的绑定键 {configuredBindKey} (用于槽位 {i}) 已按下。悬停：{hoveredAbility.Name}。QC 页面：{Main._actionBarManager.ActiveQuickCastPage}");
                     Main._actionBarManager.BindSpellToLogicalSlot(Main._actionBarManager.ActiveQuickCastPage, i, hoveredAbility);
                     BindingDataManager.SaveBindings(Main.ModEntry); // 绑定后立即保存
                     return true;
@@ -119,7 +119,7 @@ namespace QuickCast
                 Main.Settings.ReturnToMainKey != KeyCode.None &&
                 Input.GetKeyDown(Main.Settings.ReturnToMainKey))
             {
-                Main.Log($"[QC Input] 返回键 {Main.Settings.ReturnToMainKey} 按下。停用快捷施法模式。");
+                Main.LogDebug($"[QC Input] 返回键 {Main.Settings.ReturnToMainKey} 按下。停用快捷施法模式。");
                 Main._actionBarManager.TryDeactivateQuickCastMode();
                 // Reset double-tap tracking if return key is used
                 _lastPageActivationKeyPressed = KeyCode.None;

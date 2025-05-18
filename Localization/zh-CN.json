@@ -1,11 +1,11 @@
 {
   "SettingsTitle": "欢迎使用 QuickCast Mod 设置!",
   "InstructionsHeader": "说明:",
-  "InstructionBindKey": "  - 点击对应条目右侧的“设置”按钮后，按下键盘上的任意键来绑定。",
-  "InstructionCancelKey": "  - 在“请按键...”状态下，按【Escape】键可以取消当前设置操作。",
-  "InstructionClearKey": "  - 在“请按键...”状态下，点击【鼠标右键】可以将该按键绑定清除 (设置为 None)。",
-  "InstructionCtrlModifier": "  - “页面激活键”需要与键盘上的【Ctrl】键组合使用。",
-  "InstructionConflict": "  - 如果出现“按键冲突!”提示，请确保在同一配置区域内没有重复的按键设置。",
+  "InstructionBindKey": "  - 点击对应条目右侧的\"设置\"按钮后，按下键盘上的任意键来绑定。",
+  "InstructionCancelKey": "  - 在\"请按键...\"状态下，按【Escape】键可以取消当前设置操作。",
+  "InstructionClearKey": "  - 在\"请按键...\"状态下，点击【鼠标右键】可以将该按键绑定清除 (设置为 None)。",
+  "InstructionCtrlModifier": "  - \"页面激活键\"需要与键盘上的【Ctrl】键组合使用。",
+  "InstructionConflict": "  - 如果出现\"按键冲突!\"提示，请确保在同一配置区域内没有重复的按键设置。",
   "BindKeySettingsHeader": "绑定键配置 (Bind Key Settings for Logical Slots):",
   "LogicalSlotBindKeyFormat": "逻辑槽位 {0} 绑定键:",
   "PressKeyPrompt": "请按键...",
@@ -36,5 +36,11 @@
   "CurrentLanguageLabel": "当前语言: {0}",
   "SelectLanguageLabel": "选择语言:",
   "LanguageEnglish": "English (英文)",
-  "LanguageChinese": "简体中文"
+  "LanguageChinese": "简体中文",
+  "QuickCastActiveFormat": "快捷施法：{0} 已激活",
+  "QuickCastReturnedToMain": "快捷施法：已返回主快捷栏",
+  "SpellLevel0_Display": "戏法",
+  "SpellLevelN_DisplayFormat": "{0}环",
+  "SpellLevel10_Display": "10环 (神话)",
+  "QuickCastSpellbookTitleFormat": "快捷施法: {0}"
 }

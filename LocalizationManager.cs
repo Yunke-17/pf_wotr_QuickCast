@@ -23,16 +23,16 @@ namespace QuickCast
             if (Main.Settings != null && !string.IsNullOrEmpty(Main.Settings.SelectedLanguage))
             {
                 targetLanguage = Main.Settings.SelectedLanguage;
-                Main.Log($"[LocalizationManager] Using language from settings: {targetLanguage}");
+                Main.LogDebug($"[LocalizationManager] Using language from settings: {targetLanguage}");
             }
             else if (Application.systemLanguage == SystemLanguage.Chinese || Application.systemLanguage == SystemLanguage.ChineseSimplified)
             {
                 targetLanguage = "zh-CN";
-                Main.Log($"[LocalizationManager] Using system language: {targetLanguage}");
+                Main.LogDebug($"[LocalizationManager] Using system language: {targetLanguage}");
             }
             else
             {
-                Main.Log($"[LocalizationManager] Using default language: {targetLanguage}");
+                Main.LogDebug($"[LocalizationManager] Using default language: {targetLanguage}");
             }
             
             LoadTranslations(modEntry, targetLanguage);
@@ -43,7 +43,7 @@ namespace QuickCast
         {
             _currentLanguage = languageCode; // Update current language tracker
             string langFilePath = Path.Combine(modEntry.Path, "Localization", $"{languageCode}.json");
-            Main.Log($"[LocalizationManager] Attempting to load translations from: {langFilePath}");
+            Main.LogDebug($"[LocalizationManager] Attempting to load translations from: {langFilePath}");
 
             if (File.Exists(langFilePath))
             {
@@ -51,18 +51,18 @@ namespace QuickCast
                 {
                     string json = File.ReadAllText(langFilePath);
                     _translations = JsonConvert.DeserializeObject<Dictionary<string, string>>(json);
-                    Main.Log($"[LocalizationManager] Successfully loaded translations for {languageCode}. Deserialized {_translations?.Count ?? 0} entries.");
+                    Main.LogDebug($"[LocalizationManager] Successfully loaded translations for {languageCode}. Deserialized {_translations?.Count ?? 0} entries.");
                     
                     // New detailed logging of keys
-                    if (_translations != null && _translations.Count > 0)
+                    if (Main.Settings.EnableVerboseLogging && _translations != null && _translations.Count > 0)
                     {
                         System.Text.StringBuilder sb = new System.Text.StringBuilder();
-                        sb.AppendLine($"[LocalizationManager] Keys loaded for {languageCode}:");
+                        sb.AppendLine($"[DEBUG] [LocalizationManager] Keys loaded for {languageCode}:");
                         foreach (var key in _translations.Keys)
                         {
-                            sb.AppendLine($"- {key}");
+                            sb.AppendLine($"[DEBUG] - {key}");
                         }
-                        Main.Log(sb.ToString());
+                        Main.ModEntry?.Logger.Log(sb.ToString()); // Directly use ModEntry.Logger for this debug log
                     }
                     else if (_translations == null)
                     {
@@ -82,11 +82,11 @@ namespace QuickCast
             }
             else
             {
-                Main.Log($"[LocalizationManager] Translation file not found for {languageCode}.");
+                Main.LogDebug($"[LocalizationManager] Translation file not found for {languageCode}.");
                 _translations = new Dictionary<string, string>(); 
                 if (languageCode != "en") // Fallback to English if the selected/system language file is missing
                 {
-                    Main.Log($"[LocalizationManager] Attempting to load English fallback translations as {languageCode}.json was not found.");
+                    Main.LogDebug($"[LocalizationManager] Attempting to load English fallback translations as {languageCode}.json was not found.");
                     LoadTranslations(modEntry, "en");
                 }
             }
@@ -94,13 +94,13 @@ namespace QuickCast
 
         public static void ChangeLanguageAndSave(string languageCode, UnityModManager.ModEntry modEntry)
         {
-            Main.Log($"[LocalizationManager] Changing language to: {languageCode}");
+            Main.LogDebug($"[LocalizationManager] Changing language to: {languageCode}");
             LoadTranslations(modEntry, languageCode);
             if (Main.Settings != null)
             {
                 Main.Settings.SelectedLanguage = languageCode;
                 Main.Settings.Save(modEntry); // Save settings after changing language
-                Main.Log($"[LocalizationManager] Saved selected language ({languageCode}) to settings.");
+                Main.LogDebug($"[LocalizationManager] Saved selected language ({languageCode}) to settings.");
             }
             else
             {

@@ -36,5 +36,11 @@
   "CurrentLanguageLabel": "Current Language: {0}",
   "SelectLanguageLabel": "Select Language:",
   "LanguageEnglish": "English",
-  "LanguageChinese": "简体中文 (Simplified Chinese)"
+  "LanguageChinese": "简体中文 (Simplified Chinese)",
+  "QuickCastActiveFormat": "QuickCast: {0} Active",
+  "QuickCastReturnedToMain": "QuickCast: Returned to Main Hotbar",
+  "SpellLevel0_Display": "Cantrips",
+  "SpellLevelN_DisplayFormat": "Level {0}",
+  "SpellLevel10_Display": "Level 10 (Mythic)",
+  "QuickCastSpellbookTitleFormat": "QuickCast: {0}"
 }

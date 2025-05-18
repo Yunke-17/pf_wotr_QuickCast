@@ -12,10 +12,16 @@ namespace QuickCast
     public static class GameUIManager
     {
         public static ActionBarPCView CachedActionBarPCView { get; internal set; }
-        internal static FieldInfo _spellsGroupFieldInfo; // internal for Main to init ActionBarManager
         internal static bool? _previousSpellbookActiveAndInteractableState = null; // internal for InputManager to reset
 
-        public static FieldInfo GetSpellsGroupFieldInfo() => _spellsGroupFieldInfo;
+        public static ActionBarGroupPCView GetSpellsGroupView()
+        {
+            if (CachedActionBarPCView != null)
+            {
+                return CachedActionBarPCView.m_SpellsGroup;
+            }
+            return null;
+        }
         public static ActionBarPCView GetCachedActionBarPCView() => CachedActionBarPCView; // For ActionBarManager constructor
 
 
@@ -23,35 +29,11 @@ namespace QuickCast
         {
             if (CachedActionBarPCView == null)
             {
-                Main.Log("[GameUIManager] CachedActionBarPCView 为空，尝试通过 FindObjectOfType 查找...");
+                Main.LogDebug("[GameUIManager] CachedActionBarPCView 为空，尝试通过 FindObjectOfType 查找...");
                 CachedActionBarPCView = UnityEngine.Object.FindObjectOfType<ActionBarPCView>();
                 if (CachedActionBarPCView != null)
                 {
-                    Main.Log($"[GameUIManager] 成功通过 FindObjectOfType 找到并缓存了 ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
-                    var currentCharacter = Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter;
-                    if (currentCharacter != null && _spellsGroupFieldInfo == null)
-                    {
-                        try
-                        {
-                            _spellsGroupFieldInfo = typeof(ActionBarPCView).GetField("m_SpellsGroup", BindingFlags.NonPublic | BindingFlags.Instance);
-                            if (_spellsGroupFieldInfo != null)
-                            {
-                                Main.Log("[GameUIManager] 成功获取 m_SpellsGroup 的 FieldInfo。");
-                            }
-                            else
-                            {
-                                Main.Log("[GameUIManager] 错误：未能获取 m_SpellsGroup 的 FieldInfo。");
-                            }
-                        }
-                        catch (System.Exception ex)
-                        {
-                            Main.Log($"[GameUIManager] 尝试获取 m_SpellsGroup 的 FieldInfo 时出错: {ex.Message}");
-                        }
-                    }
-                    else if (currentCharacter == null)
-                    {
-                        Main.Log("[GameUIManager EnsureCachedActionBarView]: 当前未选择角色，暂不尝试获取 m_SpellsGroup FieldInfo。");
-                    }
+                    Main.LogDebug($"[GameUIManager] 成功通过 FindObjectOfType 找到并缓存了 ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
                 }
                 else
                 {
@@ -74,16 +56,16 @@ namespace QuickCast
             {
                 return false;
             }
-            if (CachedActionBarPCView == null || _spellsGroupFieldInfo == null) return false;
+            if (CachedActionBarPCView == null || CachedActionBarPCView.m_SpellsGroup == null) return false;
 
             try
             {
-                var spellsGroupView = _spellsGroupFieldInfo.GetValue(CachedActionBarPCView) as ActionBarGroupPCView;
+                var spellsGroupView = CachedActionBarPCView.m_SpellsGroup;
                 bool isActive = spellsGroupView != null && spellsGroupView.gameObject.activeInHierarchy;
 
                 if (_previousSpellbookActiveAndInteractableState == null || _previousSpellbookActiveAndInteractableState.Value != isActive)
                 {
-                    Main.Log($"[GameUIManager IsSpellbookInterfaceActive] 法术书UI是否可见：{isActive}");
+                    Main.LogDebug($"[GameUIManager IsSpellbookInterfaceActive] 法术书UI是否可见：{isActive}");
                     _previousSpellbookActiveAndInteractableState = isActive;
                 }
                 return isActive;

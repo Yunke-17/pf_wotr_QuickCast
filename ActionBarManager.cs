@@ -16,6 +16,7 @@ using Kingmaker.UI.UnitSettings;
 using Kingmaker.UnitLogic.Abilities.Blueprints;
 using Kingmaker.UnitLogic.Commands;
 using UnityEngine.UI;
+using TMPro;
 
 namespace QuickCast
 {
@@ -48,22 +49,22 @@ namespace QuickCast
 
         private readonly UnityModManager.ModEntry _modEntry;
         private readonly Func<ActionBarPCView> _getActionBarPCView;
-        private readonly Func<FieldInfo> _getSpellsGroupFieldInfo;
-
-        // 新增：用于缓存 ActionBarGroupPCView.m_SlotsList 的 FieldInfo
-        private FieldInfo _slotsListFieldInfo_Cached = null;
+        private readonly Func<ActionBarGroupPCView> _getSpellsGroupView;
 
         // 用于追踪主行动栏上最近被绑定的槽位的新静态字段
         public static readonly HashSet<int> RecentlyBoundSlotHashes = new HashSet<int>();
         public static int FrameOfLastBindingRefresh = -1;
+
+        // 新增: 用于修改法术书组标题的反射缓存和原始标题存储
+        private string _originalSpellGroupName = null;
         #endregion
 
         #region 构造函数与初始化
-        public ActionBarManager(UnityModManager.ModEntry modEntry, Func<ActionBarPCView> getActionBarPCView, Func<FieldInfo> getSpellsGroupFieldInfo)
+        public ActionBarManager(UnityModManager.ModEntry modEntry, Func<ActionBarPCView> getActionBarPCView, Func<ActionBarGroupPCView> getSpellsGroupView)
         {
             _modEntry = modEntry;
             _getActionBarPCView = getActionBarPCView;
-            _getSpellsGroupFieldInfo = getSpellsGroupFieldInfo;
+            _getSpellsGroupView = getSpellsGroupView;
 
             _mainBarOverriddenSlotsOriginalContent = new Dictionary<int, MechanicActionBarSlot>();
             _emptySlotPlaceholder = new MechanicActionBarSlotEmpty();
@@ -276,7 +277,7 @@ namespace QuickCast
                 currentCharacterBindings[spellLevel] = new Dictionary<int, string>();
             }
             currentCharacterBindings[spellLevel][logicalSlotIndex] = spellData.Blueprint.AssetGuidThreadSafe; 
-            Log($"[ABM] 法术GUID '{spellData.Blueprint.AssetGuidThreadSafe}' ({spellData.Name}) 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
+            LogDebug($"[ABM] 法术GUID '{spellData.Blueprint.AssetGuidThreadSafe}' ({spellData.Name}) 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
 
             LogDebug($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
             var currentSpellIdBindingsForLogging = BindingDataManager.GetCurrentCharacterBindings(false); // 使用 BindingDataManager
@@ -302,7 +303,7 @@ namespace QuickCast
             if (Kingmaker.UI.UISoundController.Instance != null)
             {
                 Kingmaker.UI.UISoundController.Instance.Play(Kingmaker.UI.UISoundType.ActionBarSlotClick);
-                LogDebug("[ABM BindSpell] 已为法术 '{spellData.Name}' 播放 ActionBarSlotClick 音效。");
+                LogDebug($"[ABM BindSpell] 已为法术 '{spellData.Name}' 播放 ActionBarSlotClick 音效。");
             }
             else
             {
@@ -343,17 +344,11 @@ namespace QuickCast
             LogDebug($"[ABM] 尝试激活快捷施法页面：{spellLevel}");
             var game = Game.Instance;
             var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
-            var cachedView = _getActionBarPCView();
-            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // 这已在Main中缓存并传递给ABM构造函数
+            var spellsGroupInstance = _getSpellsGroupView?.Invoke();
 
-            if (cachedView == null)
+            if (spellsGroupInstance == null)
             {
-                Log("[ABM TryActivate] 错误：缓存的 ActionBarPCView 为空。"); // 关键错误
-                RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
-            }
-            if (spellsFieldInfo == null)
-            {
-                Log("[ABM TryActivate] 错误：spellsGroupFieldInfo (对应 m_SpellsGroup) 为空。"); // 关键错误
+                Log("[ABM TryActivate] 错误：spellsGroupInstance (来自 m_SpellsGroup) 为空。"); // 关键错误
                 RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
             }
             if (actionBarVM == null)
@@ -442,38 +437,8 @@ namespace QuickCast
             {
                 var actionBarVMToSetLevel = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
 
-                if (cachedView == null) { Log("[ABM TryActivate] 错误：cachedView为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
-                if (spellsFieldInfo == null) { Log("[ABM TryActivate] 错误：spellsFieldInfo为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
+                if (spellsGroupInstance == null) { Log("[ABM TryActivate] 错误：spellsGroupInstance为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
                 if (actionBarVMToSetLevel == null) { Log("[ABM TryActivate] 错误：actionBarVMToSetLevel为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
-
-                var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
-                if (spellsGroupInstance == null)
-                {
-                    Log("[ABM TryActivate] 错误：通过反射从 ActionBarPCView 获取 m_SpellsGroup 实例失败。"); // 关键
-                    RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false;
-                }
-
-                // 尝试获取和缓存 m_SlotsList FieldInfo (如果尚未缓存)
-                if (_slotsListFieldInfo_Cached == null)
-                {
-                    try
-                    {
-                        _slotsListFieldInfo_Cached = typeof(ActionBarGroupPCView).GetField("m_SlotsList", BindingFlags.NonPublic | BindingFlags.Instance);
-                        if (_slotsListFieldInfo_Cached != null)
-                        {
-                            LogDebug("[ABM TryActivate] 成功获取并缓存了 m_SlotsList 的 FieldInfo。");
-                        }
-                        else
-                        {
-                            Log("[ABM TryActivate] 错误：未能获取 m_SlotsList 的 FieldInfo。"); // 关键
-                        }
-                    }
-                    catch (Exception ex_slotsListField)
-                    {
-                        Log($"[ABM TryActivate] 获取 m_SlotsList FieldInfo 时出错: {ex_slotsListField.Message}。"); // 关键
-                        _slotsListFieldInfo_Cached = null; 
-                    }
-                }
                 
                 LogDebug("[ABM TryActivate] 尝试直接调用 m_SpellsGroup.SetVisible(true, true)。");
                 spellsGroupInstance.SetVisible(true, true); 
@@ -491,7 +456,7 @@ namespace QuickCast
                 }
                 else
                 {
-                    LogDebug($"[ABM TryActivate] 游戏不处于适合设置法术等级的模式 ({game.CurrentMode})。");
+                    LogDebug($"[ABM TryActivate] 游戏不处于适合设置法术等级的模式 ({game.CurrentMode})。等待Update()中的同步");
                 }
 
                 _isQuickCastModeActive = true;
@@ -499,16 +464,42 @@ namespace QuickCast
 
                 RefreshMainActionBarForCurrentQuickCastPage(); // 调用统一的刷新逻辑
 
-                string pageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
-                if (_activeQuickCastPage == 10) pageNameDisplay = "10环(神话)";
-                string message = $"快捷施法: {pageNameDisplay} 已激活";
+                string pageNameDisplay;
+                if (_activeQuickCastPage == 0) pageNameDisplay = LocalizationManager.GetString("SpellLevel0_Display");
+                else if (_activeQuickCastPage == 10) pageNameDisplay = LocalizationManager.GetString("SpellLevel10_Display");
+                else pageNameDisplay = LocalizationManager.GetString("SpellLevelN_DisplayFormat", _activeQuickCastPage);
+                
+                string message = LocalizationManager.GetString("QuickCastActiveFormat", pageNameDisplay);
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message)); // 用户消息
-                Log($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。"); // 保留，重要状态
+                LogDebug($"[ABM] 内部：快捷施法页面 {pageNameDisplay} 已成功激活。");
 
                 // 应用法术书大小调整逻辑 (仅当快捷施法激活时)
-                if (spellsGroupInstance != null && spellbook != null) // spellbook is already checked earlier, but good for clarity
+                if (spellsGroupInstance != null && spellbook != null) 
                 {
                     AdaptQuickCastSpellbookUISize(spellsGroupInstance, spellbook, _activeQuickCastPage);
+
+                    // 新增：修改法术书组标题
+                    try
+                    {
+                        if (spellsGroupInstance.m_GroupNameLabel != null)
+                        {
+                            var groupNameLabel = spellsGroupInstance.m_GroupNameLabel;
+                            if (groupNameLabel != null)
+                            {
+                                if (_originalSpellGroupName == null) // 首次激活时保存原始标题
+                                {
+                                    _originalSpellGroupName = groupNameLabel.text;
+                                }
+                                string newTitle = LocalizationManager.GetString("QuickCastSpellbookTitleFormat", pageNameDisplay);
+                                groupNameLabel.text = newTitle;
+                                LogDebug($"[ABM] Spellbook group title set to: {newTitle}");
+                            }
+                        }
+                    }
+                    catch (Exception ex_title)
+                    {
+                        Log($"[ABM TryActivate] Error setting spellbook group title: {ex_title.Message}");
+                    }
                 }
 
                 // 播放激活音效
@@ -528,14 +519,6 @@ namespace QuickCast
             {
                 Log($"[ABM] TryActivateQuickCastMode 期间出错：{ex.ToString()}"); // 关键错误
                 RestoreMainActionBarDisplay(); 
-                var cachedViewForError = _getActionBarPCView();
-                var spellsFieldInfoForError = _getSpellsGroupFieldInfo();
-                if (cachedViewForError != null && spellsFieldInfoForError != null) {
-                    var spellsGroupInstanceForError = spellsFieldInfoForError.GetValue(cachedViewForError) as ActionBarGroupPCView;
-                    if (spellsGroupInstanceForError != null) {
-                        RestoreSpellbookUISizeToDefault(spellsGroupInstanceForError);
-                    }
-                }
                 _activeQuickCastPage = -1; _isQuickCastModeActive = false;
                 return false;
             }
@@ -544,9 +527,9 @@ namespace QuickCast
         // 新增：调整快捷施法激活时法术书UI大小的方法
         private void AdaptQuickCastSpellbookUISize(ActionBarGroupPCView spellsGroupInstance, Spellbook spellbook, int spellLevel)
         {
-            if (_slotsListFieldInfo_Cached == null) // spellsGroupInstance and spellbook checked by caller
+            if (spellsGroupInstance == null || spellsGroupInstance.m_SlotsList == null)
             {
-                LogDebug("[ABM AdaptSpellbook] m_SlotsList FieldInfo 尚未缓存，无法调整法术书大小。");
+                LogDebug("[ABM AdaptSpellbook] spellsGroupInstance or m_SlotsList is null. Cannot adapt spellbook size.");
                 return;
             }
 
@@ -554,16 +537,13 @@ namespace QuickCast
             {
                 var knownSpells = spellbook.GetKnownSpells(spellLevel);
                 int actualSpellCount = knownSpells?.Count ?? 0;
-                // LogDebug($"[ABM AdaptSpellbook] 快捷施法激活，环阶 {spellLevel} 法术数量: {actualSpellCount}"); 
-
-                var slotsListValue = _slotsListFieldInfo_Cached.GetValue(spellsGroupInstance);
-                if (slotsListValue is List<ActionBarBaseSlotPCView> spellSlotsPCList)
+                
+                var spellSlotsPCList = spellsGroupInstance.m_SlotsList;
+                if (spellSlotsPCList != null)
                 {
                     int numberOfRowsNeeded = (actualSpellCount == 0) ? 1 : Mathf.CeilToInt((float)actualSpellCount / 5.0f);
                     int totalSlotsToMakeVisibleInSpellbook = numberOfRowsNeeded * 5;
                     
-                    // LogDebug($"[ABM AdaptSpellbook] 法术书调整：需要行数 {numberOfRowsNeeded}, 总可见槽位 {totalSlotsToMakeVisibleInSpellbook}。当前m_SlotsList大小: {spellSlotsPCList.Count}");
-
                     for (int i = 0; i < spellSlotsPCList.Count; i++)
                     {
                         if (spellSlotsPCList[i] != null && spellSlotsPCList[i].gameObject != null)
@@ -576,32 +556,31 @@ namespace QuickCast
                         }
                     }
                     LayoutRebuilder.ForceRebuildLayoutImmediate(spellsGroupInstance.transform as RectTransform);
-                    // LogDebug($"[ABM AdaptSpellbook] 已调整快捷施法状态下的法术书UI大小并强制重新布局。");
                 }
                 else
                 {
-                    Log("[ABM AdaptSpellbook] m_SlotsList 的值不是 List<ActionBarBaseSlotPCView>。"); // 警告
+                    Log("[ABM AdaptSpellbook] m_SlotsList was null after direct access."); 
                 }
             }
             catch (Exception ex_resize)
             {
-                Log($"[ABM AdaptSpellbook] 调整法术书大小时出错: {ex_resize.ToString()}"); // 关键错误
+                Log($"[ABM AdaptSpellbook] 调整法术书大小时出错: {ex_resize.ToString()}"); 
             }
         }
 
         // 新增：恢复法术书UI大小到默认状态的方法
         private void RestoreSpellbookUISizeToDefault(ActionBarGroupPCView spellsGroupInstance)
         {
-            if (_slotsListFieldInfo_Cached == null || spellsGroupInstance == null)
+            if (spellsGroupInstance == null || spellsGroupInstance.m_SlotsList == null)
             {
-                LogDebug("[ABM RestoreSpellbookUI] m_SlotsList FieldInfo 未缓存或 spellsGroupInstance 为空，无法恢复法术书UI大小。");
+                LogDebug("[ABM RestoreSpellbookUI] spellsGroupInstance or m_SlotsList is null. Cannot restore spellbook UI size.");
                 return;
             }
 
             try
             {
-                var slotsListValue = _slotsListFieldInfo_Cached.GetValue(spellsGroupInstance);
-                if (slotsListValue is List<ActionBarBaseSlotPCView> spellSlotsPCList)
+                var spellSlotsPCList = spellsGroupInstance.m_SlotsList;
+                if (spellSlotsPCList != null)
                 {
                     bool changed = false;
                     for (int i = 0; i < spellSlotsPCList.Count; i++)
@@ -618,16 +597,15 @@ namespace QuickCast
                         LayoutRebuilder.ForceRebuildLayoutImmediate(spellsGroupInstance.transform as RectTransform);
                         LogDebug("[ABM RestoreSpellbookUI] 已尝试恢复法术书UI所有槽位为激活并强制重新布局。");
                     }
-                    // else LogDebug("[ABM RestoreSpellbookUI] 所有法术书槽位均已激活，无需恢复。");
                 }
                 else
                 {
-                    Log("[ABM RestoreSpellbookUI] m_SlotsList 的值不是 List<ActionBarBaseSlotPCView>。"); // 警告
+                    Log("[ABM RestoreSpellbookUI] m_SlotsList was null after direct access."); 
                 }
             }
             catch (Exception ex_restore)
             {
-                Log($"[ABM RestoreSpellbookUI] 恢复法术书大小时出错: {ex_restore.ToString()}"); // 关键错误
+                Log($"[ABM RestoreSpellbookUI] 恢复法术书大小时出错: {ex_restore.ToString()}"); 
             }
         }
 
@@ -647,50 +625,49 @@ namespace QuickCast
 
             RestoreMainActionBarDisplay();
 
-            var cachedView = _getActionBarPCView();
-            var spellsFieldInfo = _getSpellsGroupFieldInfo(); // 这已在Main中缓存并传递给ABM构造函数
+            var spellsGroupInstance = _getSpellsGroupView?.Invoke();
 
-            // 在隐藏法术书组之前，尝试恢复其UI大小
-            if (cachedView != null && spellsFieldInfo != null)
+            if (spellsGroupInstance != null)
             {
-                var spellsGroupInstanceForRestore = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
-                if (spellsGroupInstanceForRestore != null)
+                RestoreSpellbookUISizeToDefault(spellsGroupInstance);
+                try
                 {
-                    RestoreSpellbookUISizeToDefault(spellsGroupInstanceForRestore);
+                    if (spellsGroupInstance.m_GroupNameLabel != null && _originalSpellGroupName != null)
+                    {
+                        var groupNameLabel = spellsGroupInstance.m_GroupNameLabel;
+                        if (groupNameLabel != null && groupNameLabel.text != _originalSpellGroupName) 
+                        {
+                            groupNameLabel.text = _originalSpellGroupName;
+                            LogDebug($"[ABM TryDeactivate] Spellbook group title restored to: {_originalSpellGroupName}");
+                            _originalSpellGroupName = null; 
+                        }
+                    }
                 }
-                else
+                catch (Exception ex_title_restore)
                 {
-                    LogDebug("[ABM TryDeactivate] 无法获取 spellsGroupInstance 以恢复UI大小。");
+                    Log($"[ABM TryDeactivate] Error restoring spellbook group title: {ex_title_restore.Message}");
                 }
             }
             else
             {
-                LogDebug("[ABM TryDeactivate] cachedView 或 spellsFieldInfo 为空，无法恢复法术书UI大小。");
+                LogDebug("[ABM TryDeactivate] 无法获取 spellsGroupInstance 以恢复UI大小。");
             }
 
-            if (cachedView != null && spellsFieldInfo != null)
+            if (spellsGroupInstance != null)
             {
                 try
                 {
-                    var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
-                    if (spellsGroupInstance != null)
-                    {
-                        LogDebug("[ABM] 正在对 m_SpellsGroup 调用 SetVisible(false, true)。");
-                        spellsGroupInstance.SetVisible(false, true);
-                    }
-                    else
-                    {
-                        Log("[ABM] 警告：停用期间 m_SpellsGroup 实例为空，无法隐藏法术书UI部分。"); // 警告
-                    }
+                    LogDebug("[ABM] 正在对 m_SpellsGroup 调用 SetVisible(false, true)。");
+                    spellsGroupInstance.SetVisible(false, true);
                 }
                 catch (Exception ex)
                 {
-                    Log($"[ABM] 隐藏 m_SpellsGroup 时出错：{ex.ToString()}"); // 关键错误
+                    Log($"[ABM] 隐藏 m_SpellsGroup 时出错：{ex.ToString()}"); 
                 }
             }
             else
             {
-                Log("[ABM] 警告：ActionBarPCView 或 m_SpellsGroup FieldInfo 不可用于隐藏法术书UI部分。"); // 警告
+                LogDebug("[ABM] 警告：spellsGroupInstance (m_SpellsGroup) 不可用于隐藏法术书UI部分。");
                 var actionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
                 if (actionBarVM != null)
                 {
@@ -699,18 +676,14 @@ namespace QuickCast
                 }
             }
 
-            string exitedPageNameDisplay = _activeQuickCastPage == 0 ? "戏法" : $"{_activeQuickCastPage}环";
-            if (_activeQuickCastPage == 10) exitedPageNameDisplay = "10环(神话)";
-
             bool wasActuallyActive = _isQuickCastModeActive; // 捕获重置前的状态
             _isQuickCastModeActive = false;
             _activeQuickCastPage = -1;
 
             if (wasActuallyActive || force) { 
-                string message = $"快捷施法: 返回主快捷栏";
+                string message = LocalizationManager.GetString("QuickCastReturnedToMain");
                 EventBus.RaiseEvent<ILogMessageUIHandler>(h => h.HandleLogMessage(message)); // 用户消息
-                Log($"[ABM] 内部：从页面 {exitedPageNameDisplay} 返回到主快捷栏。"); // 保留，重要状态
-
+                
                 // 播放停用音效
                 if (Kingmaker.UI.UISoundController.Instance != null)
                 {
@@ -917,7 +890,7 @@ namespace QuickCast
                     string spellName = BindingDataManager.GetAbilityDataFromSpellGuid(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, spellGuidToRemove)?.Name ?? $"Unknown Spell (GUID: {spellGuidToRemove})";
                     
                     bindingsForLevel.Remove(logicalSlotIndex);
-                    Log($"[ABM UnbindSpell] Spell '{spellName}' unbound from character {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName}, QuickCast page {_activeQuickCastPage}, logical slot {logicalSlotIndex} due to UI clear."); // 保留，重要
+                    LogDebug($"[ABM UnbindSpell] Spell '{spellName}' unbound from character {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName}, QuickCast page {_activeQuickCastPage}, logical slot {logicalSlotIndex} due to UI clear."); // 保留，重要
                     
                     RefreshMainActionBarForCurrentQuickCastPage();
                     // 解绑后保存绑定信息
@@ -936,10 +909,9 @@ namespace QuickCast
 
             var game = Game.Instance;
             var actionBarVM = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
-            var cachedView = _getActionBarPCView(); 
-            var spellsFieldInfo = _getSpellsGroupFieldInfo(); 
+            var spellsGroupInstance = _getSpellsGroupView?.Invoke();
 
-            if (actionBarVM == null || cachedView == null || spellsFieldInfo == null)
+            if (actionBarVM == null || spellsGroupInstance == null)
             {
                 LogDebug($"[ABM ForceSyncSpellbookDisplay] Prerequisite VMs/Fields not available. Cannot sync spellbook to level {targetLevel}.");
                 return;
@@ -961,7 +933,6 @@ namespace QuickCast
 
             try
             {
-                var spellsGroupInstance = spellsFieldInfo.GetValue(cachedView) as ActionBarGroupPCView;
                 if (spellsGroupInstance != null)
                 {
                     if (!spellsGroupInstance.VisibleState)

@@ -69,7 +69,7 @@ namespace QuickCast
         #region 重写基类属性与方法 (UI显示)
         public override Sprite GetIcon()
         {
-            Main.Log($"[QCMSlotSpell GetIcon] 法术：{this.Spell?.Name}, 图标是否为空：{this.Spell?.Icon == null}");
+            Main.LogDebug($"[QCMSlotSpell GetIcon] 法术：{this.Spell?.Name}, 图标是否为空：{this.Spell?.Icon == null}");
             AbilityData spell = this.Spell;
             if (((spell != null) ? spell.MagicHackData : null) != null)
             {
@@ -126,11 +126,11 @@ namespace QuickCast
 
         public override void OnClick()
         {
-            Main.Log($"[QuickCastMechanicActionBarSlotSpell] OnClick triggered. Spell: {this.Spell?.Name}. Unit: {this.Unit?.CharacterName}");
+            Main.LogDebug($"[QuickCastMechanicActionBarSlotSpell] OnClick triggered. Spell: {this.Spell?.Name}. Unit: {this.Unit?.CharacterName}");
             
             if (this.IsBad() || !this.IsPossibleActive(null))
             {
-                Main.Log("[QuickCastMechanicActionBarSlotSpell] Conditions not met for casting (IsBad or !IsPossibleActive). Playing sound and showing warning via base.OnClick if necessary.");
+                Main.LogDebug("[QuickCastMechanicActionBarSlotSpell] Conditions not met for casting (IsBad or !IsPossibleActive). Playing sound and showing warning via base.OnClick if necessary.");
                 base.OnClick(); 
                 return;
             }
@@ -139,7 +139,7 @@ namespace QuickCast
             if (Main.Settings != null && Main.Settings.AutoReturnAfterCast && this.Unit != null && this.Spell != null)
             {
                 ActionBarManager.SpellCastToAutoReturn = new Tuple<UnitEntityData, BlueprintAbility>(this.Unit, this.Spell.Blueprint);
-                Main.Log($"[QuickCastMechanicActionBarSlotSpell] Marked spell {this.Spell.Name} for unit {this.Unit.CharacterName} for auto-return.");
+                Main.LogDebug($"[QuickCastMechanicActionBarSlotSpell] Marked spell {this.Spell.Name} for unit {this.Unit.CharacterName} for auto-return.");
             }
             else
             {
@@ -148,7 +148,7 @@ namespace QuickCast
             }
 
             base.OnClick(); 
-            Main.Log("[QuickCastMechanicActionBarSlotSpell] Called base.OnClick().");
+            Main.LogDebug("[QuickCastMechanicActionBarSlotSpell] Called base.OnClick().");
         }
 
         public override TooltipBaseTemplate GetTooltipTemplate()

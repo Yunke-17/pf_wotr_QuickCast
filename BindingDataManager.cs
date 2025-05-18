@@ -75,6 +75,11 @@ namespace QuickCast
                             }
                         }
                     }
+                    var cantripAbility = spellbook.GetKnownSpells(0).FirstOrDefault(a => a.Blueprint.AssetGuidThreadSafe == spellGuid);
+                    if (cantripAbility != null)
+                    {
+                        return cantripAbility;
+                    }
                 }
                 else if (spellbook.Blueprint.Spontaneous)
                 {

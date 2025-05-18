@@ -36,7 +36,8 @@ namespace QuickCast
         // ActionBarPCView 的缓存实例
         public static ActionBarPCView CachedActionBarPCView => GameUIManager.CachedActionBarPCView;
         // m_SpellsGroup 的缓存 FieldInfo，以避免重复反射
-        private static FieldInfo _spellsGroupFieldInfo => GameUIManager._spellsGroupFieldInfo;
+        // private static FieldInfo _spellsGroupFieldInfo => GameUIManager._spellsGroupFieldInfo;
+        
         // 用于跟踪法术书UI激活的先前状态，以优化日志输出
         private static bool? _previousSpellbookActiveAndInteractableState => GameUIManager._previousSpellbookActiveAndInteractableState;
 
@@ -57,9 +58,7 @@ namespace QuickCast
             ModEntry = modEntry; // 保存ModEntry实例
             IsEnabled = true;    // Mod默认启用
 
-            // 首先初始化 LocalizationManager，这样后续的日志和设置加载可以使用本地化字符串
-            LocalizationManager.Initialize(ModEntry);
-
+            // 1. 首先加载设置
             Settings = UnityModManager.ModSettings.Load<Settings>(modEntry);
             if (Settings == null) 
             {
@@ -67,6 +66,10 @@ namespace QuickCast
                 Log("警告：无法加载设置，已创建新实例。");
             }
 
+            // 2. 然后基于已加载的设置（或其他逻辑）初始化本地化管理器
+            LocalizationManager.Initialize(ModEntry);
+
+            // 3. 最后初始化依赖本地化的UI组件的标签
             SettingsUIManager.InitializeSettingLabels();
 
             modEntry.OnUpdate = OnUpdate;     
@@ -76,18 +79,18 @@ namespace QuickCast
 
             var harmony = new Harmony(modEntry.Info.Id);
             harmony.PatchAll(Assembly.GetExecutingAssembly()); 
-            Log("已应用Harmony补丁。");
+            LogDebug("已应用Harmony补丁。");
 
             _actionBarManager = new ActionBarManager(
                 ModEntry,
                 GameUIManager.GetCachedActionBarPCView, 
-                GameUIManager.GetSpellsGroupFieldInfo 
+                GameUIManager.GetSpellsGroupView
             );
             EventBus.Subscribe(_actionBarManager); // Subscribe ActionBarManager to EventBus
-            Log("ActionBarManager 已订阅 EventBus。");
+            LogDebug("ActionBarManager 已订阅 EventBus。");
 
             BindingDataManager.LoadBindings(ModEntry);
-            Log("已尝试加载快捷施法角色绑定。");
+            LogDebug("已尝试加载快捷施法角色绑定。");
 
             Log("QuickCast Mod Load 方法完成。");
             return true; 
@@ -108,9 +111,9 @@ namespace QuickCast
                     }
                     // Unsubscribe when mod is disabled
                     EventBus.Unsubscribe(_actionBarManager); 
-                    Log("ActionBarManager 已从 EventBus 取消订阅 (Mod 禁用).");
+                    LogDebug("ActionBarManager 已从 EventBus 取消订阅 (Mod 禁用).");
                     BindingDataManager.SaveBindings(ModEntry);
-                    Log("尝试在Mod禁用时保存绑定信息。");
+                    LogDebug("尝试在Mod禁用时保存绑定信息。");
                 }
                 if(GameUIManager._previousSpellbookActiveAndInteractableState.HasValue) GameUIManager._previousSpellbookActiveAndInteractableState = null; 
             }
@@ -120,7 +123,7 @@ namespace QuickCast
                 if (_actionBarManager != null)
                 {
                     EventBus.Subscribe(_actionBarManager);
-                    Log("ActionBarManager 已重新订阅 EventBus (Mod 启用).");
+                    LogDebug("ActionBarManager 已重新订阅 EventBus (Mod 启用).");
                 }
                 // Potentially re-initialize or re-cache things if needed upon re-enabling
             }
@@ -137,9 +140,9 @@ namespace QuickCast
                 // 但如果GameUIManager.CachedActionBarPCView存在，且游戏实例不存在了（比如退回主菜单的过程），则可以清除
                 if (GameUIManager.GetCachedActionBarPCView() != null && Game.Instance == null) 
                 {
-                    Log("[Main OnUpdate] Game.Instance 为空 (可能已退回主菜单)，清除 GameUIManager.CachedActionBarPCView。");
+                    LogDebug("[Main OnUpdate] Game.Instance 为空 (可能已退回主菜单)，清除 GameUIManager.CachedActionBarPCView。");
                     GameUIManager.CachedActionBarPCView = null; // 直接通过GameUIManager访问和设置
-                    GameUIManager._spellsGroupFieldInfo = null; // 同上
+                    // GameUIManager._spellsGroupFieldInfo = null; // REMOVED: No longer managing this FieldInfo here
                 }
                 return; 
             }
@@ -150,9 +153,9 @@ namespace QuickCast
             {
                 if (GameUIManager.GetCachedActionBarPCView() != null)
                 {
-                    Log($"[Main OnUpdate] 游戏处于 {currentMode} 模式 (判断为应清除缓存)，清除 GameUIManager.CachedActionBarPCView。");
+                    LogDebug($"[Main OnUpdate] 游戏处于 {currentMode} 模式 (判断为应清除缓存)，清除 GameUIManager.CachedActionBarPCView。");
                     GameUIManager.CachedActionBarPCView = null;  // 直接通过GameUIManager访问和设置
-                    GameUIManager._spellsGroupFieldInfo = null; // 同上
+                    // GameUIManager._spellsGroupFieldInfo = null; // REMOVED: No longer managing this FieldInfo here
                 }
                 return; // 在这些模式下不执行后续逻辑
             }
@@ -201,7 +204,7 @@ namespace QuickCast
         {
             Settings.Save(modEntry); 
             BindingDataManager.SaveBindings(modEntry); // 保存Mod设置时也保存绑定信息
-            Log("已在OnSaveGUI中尝试保存快捷施法角色绑定。");
+            LogDebug("已在OnSaveGUI中尝试保存快捷施法角色绑定。");
         }
         #endregion
 
@@ -209,6 +212,14 @@ namespace QuickCast
         public static void Log(string message)
         {
             ModEntry?.Logger.Log(message); 
+        }
+
+        public static void LogDebug(string message)
+        {
+            if (Settings != null && Settings.EnableVerboseLogging)
+            {
+                ModEntry?.Logger.Log("[DEBUG] " + message);
+            }
         }
         #endregion
     }
