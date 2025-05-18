@@ -76,7 +76,7 @@ This Mod is designed to be intuitive and easy to get started with.
 
 ### 4.6 Return to Main Hotbar
 *   Press the "Return Key" (defaults to `X`).
-*   Or (configurable): Press the currently active "Page Activation Key" again.
+*   Or (configurable): Double-press the currently active "Page Activation Key".
 *   The spellbook title and interface will return to normal.
 
 ### 4.7 Post-Cast State Management

@@ -134,7 +134,7 @@
   </ItemGroup>
   <Target Name="PostBuildCopyFiles" AfterTargets="PostBuildEvent">
     <PropertyGroup>
-      <ActualModTargetDir>C:\Program Files (x86)\Steam\steamapps\common\Pathfinder Second Adventure\Mods\QuickCast</ActualModTargetDir>
+      <ActualModTargetDir>C:\Program Files (x86)\Steam\steamapps\common\Pathfinder Second Adventure\Mods\QuickCastSystem</ActualModTargetDir>
     </PropertyGroup>
     <Message Text="Project Output Path: $(TargetPath)" Importance="high" />
     <Message Text="Project Directory: $(ProjectDir)" Importance="high" />
