@@ -1,13 +1,53 @@
-# Visual Studio
-.vs/
+# User-specific files
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
 
-# Build artifacts
-**/bin/
-**/obj/
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+
+# Visual Studio Team Services
+*.vspscc
+*.vssscc
+.vs/
+
+# Cursor IDE
+.cursor/
+
+# NuGet Packages
+packages/
+*.nupkg
+# The packages folder can be ignored because of Package Restore
+**/packages/*
+# except build/, which is used as an MSBuild target.
+!**/packages/build/
+# Uncomment if you want to prevent NuGet.exe from downloading packages even if it's not checked in.
+# NuGet.exe
+
+# Roslyn files
+*.roslyncodefailures.txt
+
+# User-specified files and folders to ignore
+*.png
+quickcast.md
+注意事项.md
+publicized_assemblies/
+
+# Miscellaneous
+*.DS_Store
+UpgradeLog.htm
 
 # Unity Mod Manager logs (if they are in the project directory and you don't want to track them)
 # log.txt 
