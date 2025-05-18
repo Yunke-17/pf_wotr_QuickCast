@@ -1,0 +1,74 @@
+---
+description: 
+globs: *.cs,*.md
+alwaysApply: false
+---
+# Mod 技术实现考量
+
+该规则概述了"法术快速施法系统"Mod 在技术实现方面的主要考量点。参考 `[quickcast.md](mdc:quickcast.md)` 第 5, 6 节 和 `[注意事项.md](mdc:注意事项.md)` 第 6, 7, 8 点。
+
+## 1. 开发平台与框架
+
+参考 `[quickcast.md](mdc:quickcast.md)` 第 6.1 节。
+
+*   **Unity Mod Manager (UMM)**: 使用社区常用的 UMM 框架进行开发，Mod 入口、设置界面、日志等均通过 UMM 管理。
+*   **HarmonyLib**: 必须使用 Harmony 库进行游戏运行时代码注入（Patching），以便修改或扩展游戏原有功能，并访问 `private` 或 `protected` 的成员。**然而，鉴于目前项目已采用 Publicized Assembly-CSharp.dll，对 Harmony 的依赖可以有所降低，部分原先需要Patch才能访问的成员可能已变为 public。**
+
+## 2. 游戏代码分析与交互
+
+参考 `[quickcast.md](mdc:quickcast.md)` 第 6.1 节 和 `[注意事项.md](mdc:注意事项.md)` 第 6, 8 点，以及 `forced_decompiled_code_reference.mdc` 规则。
+
+*   **反编译与 Publicized 程序集**: 
+    *   虽然传统的反编译工具（如 dnSpy, ILSpy, JetBrains dotPeek）仍可用于理解游戏逻辑，但本项目当前使用的是 **Publicized `Assembly-CSharp.dll`**。这意味着许多原先为 `private` 或 `protected` 的类成员（字段、方法、属性）已被强行修改为 `public`。
+    *   **优势**: 这极大地简化了与游戏代码的直接交互，可以显著减少对反射（Reflection）的依赖，也可能减少某些情况下对 Harmony Patch 的需求，使得代码更简洁、直接，且性能可能略有提升。
+    *   **注意**: 尽管如此，开发者仍需结合反编译工具来理解代码结构和逻辑流程，因为 Publicized 版本仅改变了访问修饰符，并未改变代码的内在行为。
+*   **代码定位**: Mod 与游戏系统交互的任何方面（如获取法术信息 `AbilityData`、角色信息 `UnitEntityData`、操作栏状态 `ActionBarVM`、模拟行动栏格子内容填充 `MechanicActionBarSlot`, `QuickCastMechanicActionBarSlotSpell`、触发施法 `UnitUseAbility`、处理目标选择 `SelectedAbilityHandler`、监听UI事件等）**必须**基于对反编译代码（以及 Publicized 版本带来的可见性变化）的分析，以准确识别相关类、方法、属性、字段和事件。
+*   **核心参考路径**: 强制参考 `C:\Users\ToisnaLey\Desktop\Decompilation\Assembly-CSharp` 下的代码（无论是原始反编译版还是 Publicized 版，理解其结构是关键）。
+*   **路径约定**: 在Mod代码内部进行游戏资源或代码符号引用时，优先使用相对命名空间和类型名。对于本地开发环境的代码查阅，则使用上述绝对路径。
+
+## 3. 数据持久化
+
+参考 `[quickcast.md](mdc:quickcast.md)` 第 6.3 节 和 第 5 节。
+
+*   **核心需求**: 
+    1.  **法术绑定信息**: 哪个环阶的哪个逻辑施法槽位绑定了哪个法术 (`AbilityData` 的唯一标识)。数据结构可能为 `Dictionary<int_spellLevel, Dictionary<int_logicalSlotIndex, string_spellGuid>>`。
+    2.  **用户自定义按键映射**: 
+        *   所有环阶的页面激活键 (Page Activation Keys)。
+        *   所有逻辑施法槽位的绑定键 (Bind Keys)。
+        *   返回键 (Return Key)。
+    3.  **其他配置**: 如施法后行为（保持当前页/自动返回）、UI调整参数等。
+*   **存储方案**: 
+    *   **首选**: UMM 提供的 Mod 设置存储机制 (通常是 JSON 文件)。
+    *   备选: 绑定到角色数据并随游戏存档保存 (更复杂，可能需要处理存档版本兼容性)。
+*   **目标**: 确保在游戏启动、存档加载、角色切换时能正确恢复所有Mod配置和法术绑定。
+
+## 4. 性能优化
+
+参考 `[quickcast.md](mdc:quickcast.md)` 第 6.4 节。
+
+*   **重要性**: Mod 的按键监听 (在 `Update` 中)、UI 更新（尤其是动态主快捷栏的刷新 `RefreshMainActionBarForCurrentQuickCastPage`）、事件处理等逻辑需要高效实现，避免在战斗中引入卡顿或性能下降。
+*   **策略**: 
+    *   缓存反射结果: 对于频繁访问的通过反射获取的 `FieldInfo`, `PropertyInfo`, `MethodInfo` 等，应在Mod加载时缓存，避免重复反射调用。
+    *   避免在游戏的主更新循环（如 `Update()`）中进行不必要的、过于频繁或耗时的检查和操作。例如，UI状态的检查可以结合事件。
+    *   合理使用Harmony Patch: 前缀、后缀、环绕补丁应精确高效，避免不必要的代码执行。
+    *   事件驱动: 考虑使用游戏事件或Mod内部事件来响应状态变化，而非持续轮询。
+
+## 5. Mod 兼容性与冲突管理
+
+参考 `[quickcast.md](mdc:quickcast.md)` 第 6.2 节。
+
+*   **按键冲突**: 
+    *   默认按键选择需谨慎，避开常用游戏键位。
+    *   **必须**提供完整的按键自定义功能（页面激活键、绑定键、返回键），并在设置界面提示潜在的按键冲突。
+*   **系统交互**: 
+    *   Mod 对游戏系统的修改（如Patch）应尽可能精确和局部化，减少与其他 Mod 冲突的可能性。
+    *   明确Mod修改的游戏类和方法，有助于排查兼容性问题。
+
+## 6. 代码质量与注意事项
+
+参考 `[注意事项.md](mdc:注意事项.md)` 第 7 点。
+
+*   **准确性**: 务必注意C#代码编写的准确性，包括命名、类型匹配、空值检查等。
+*   **错误处理**: 在关键逻辑点（如反射操作、文件读写、游戏状态依赖操作）添加适当的 `try-catch` 块，并使用 `ModEntry.Logger` 记录详细错误信息。
+*   **日志**: 有效利用 `ModEntry.Logger.Log()` 输出关键状态信息和潜在问题，便于调试。
+

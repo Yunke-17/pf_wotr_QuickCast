@@ -1,0 +1,122 @@
+---
+description: 
+globs: *.cs,*.md
+alwaysApply: false
+---
+# C# 开发工作流与功能点进度追踪规范
+
+本规范旨在为 C# 项目开发提供一套工作流程指导，强调将复杂功能分解为可管理的功能点，并对每个功能点的开发进度进行追踪。这有助于提高代码质量、可维护性，并确保项目按计划推进。
+
+## 1. C# 编码基本准则
+
+*   **命名规范**: 
+    *   使用 PascalCase 命名类、方法、属性、事件、枚举、委托 (e.g., `MyCustomClass`, `CalculateTotalAmount`)。
+    *   使用 camelCase 命名局部变量和方法参数 (e.g., `myVariable`, `amountValue`)。
+    *   接口名前加 `I` (e.g., `IServiceProvider`)。
+    *   避免使用缩写，除非是广为人知的 (e.g., `Id`, `Xml`, `Db`)。
+    *   私有字段可以使用 `_` 前缀 (e.g., `_privateField`)。
+*   **代码布局与格式化**: 
+    *   使用一致的代码格式化工具（如 Visual Studio 内置格式化或 ReSharper/Rider 的格式化功能）。
+    *   每个文件只包含一个顶级类（或相关的部分类 `partial class`）。
+    *   使用大括号 `{}` 包含所有控制流块（`if`, `else`, `for`, `while`, `foreach`, `try-catch-finally`），即使只有一行代码。
+*   **注释**: 
+    *   为公共 API（类、方法、属性）编写 XML 文档注释 (`///`)，解释其用途、参数、返回值和可能的异常。
+    *   对于复杂的内部逻辑或非显而易见的代码段，添加必要的解释性注释。
+    *   避免注释掉大段代码；应使用版本控制系统管理不再需要的代码。
+*   **SOLID 原则**: 
+    *   **S**ingle Responsibility Principle (单一职责原则): 每个类应只有一个引起其变化的原因。
+    *   **O**pen/Closed Principle (开闭原则): 软件实体（类、模块、函数等）应该可以扩展，但是不可修改。
+    *   **L**iskov Substitution Principle (里氏替换原则): 子类型必须能够替换掉它们的基类型。
+    *   **I**nterface Segregation Principle (接口隔离原则): 不应强迫任何客户端依赖于它不使用的方法。
+    *   **D**ependency Inversion Principle (依赖倒置原则): 高层模块不应该依赖于低层模块。两者都应该依赖于抽象；抽象不应该依赖于细节，细节应该依赖于抽象。
+*   **异常处理**: 
+    *   只捕获你能处理的特定异常。
+    *   避免空的 `catch {}` 块或 `catch (Exception) {}` 后不重新抛出或记录。
+    *   使用 `finally` 块确保资源（如文件流、数据库连接）被正确释放，或使用 `using` 语句。
+*   **LINQ**: 
+    *   优先使用 LINQ 进行集合操作，以提高代码的可读性和简洁性。
+    *   注意延迟执行和性能影响，避免在循环中多次执行昂贵的 LINQ 查询。
+
+## 2. 功能点分解与分步执行
+
+对于任何新功能或较大的代码修改，遵循以下分步执行的策略：
+
+1.  **需求分析与理解 (Understanding the Requirement)**:
+    *   清晰定义功能的范围、输入、输出和预期行为。
+    *   与相关人员（产品经理、设计师、其他开发者）沟通，确保理解一致。
+
+2.  **设计与规划 (Design & Planning)**:
+    *   将大的功能模块分解为更小、更独立的功能点或任务。
+    *   为每个功能点设计接口、类结构和数据流。
+    *   考虑潜在的边缘情况、错误处理和性能需求。
+    *   **输出**: 功能点列表，每个功能点有简要描述和预期实现。
+
+3.  **编码实现 (Implementation - Phased)**:
+    *   **逐个功能点实现**: 专注于一次实现一个或少数几个相关的功能点。
+    *   **接口先行**: 如果涉及多个类或模块交互，先定义清晰的接口。
+    *   **单元测试 (Unit Testing)**: 为每个独立的功能点或关键逻辑编写单元测试。这有助于验证代码的正确性，并为未来的重构提供保障。
+    *   **集成测试 (Integration Testing)**: 在相关功能点完成后，进行集成测试以确保它们协同工作正常。
+    *   **代码评审 (Code Review)**: 关键功能点或模块完成后，邀请同事进行代码评审，获取反馈并改进代码质量。
+
+4.  **测试与验证 (Testing & Validation)**:
+    *   进行全面的功能测试，覆盖所有正常流程和边缘情况。
+    *   如果适用，进行性能测试、安全测试。
+
+5.  **文档与部署 (Documentation & Deployment)**:
+    *   更新相关的技术文档或用户文档。
+    *   按照项目的部署流程进行部署。
+
+## 3. 功能点开发进度追踪
+
+为了有效管理开发过程，建议对每个主要功能及其分解的功能点进行进度追踪。可以在项目管理工具（如 Jira, Trello, Azure DevOps）中进行，或者在代码仓库的 `README.md` 或专门的 `PROGRESS.md` 文件中记录。
+
+**示例进度记录格式 (Markdown)**:
+
+```markdown
+# 项目/模块名称: [例如：用户认证模块]
+
+## 功能: 用户注册 (User Registration)
+- **状态**: 开发中
+- **负责人**: @开发者A
+- **预计完成时间**: YYYY-MM-DD
+- **功能点**:
+  - [x] 1. 设计用户数据模型 (User Data Model Design)
+  - [x] 2. 创建数据库表结构 (Database Table Schema)
+  - [ ] 3. 实现用户注册API端点 (Implement Registration API Endpoint)
+    - [ ] 3.1. 请求参数校验 (Input Validation)
+    - [ ] 3.2. 密码哈希存储 (Password Hashing & Storage)
+    - [ ] 3.3. 用户数据持久化 (User Data Persistence)
+    - [ ] 3.4. 成功/失败响应处理 (Success/Error Response Handling)
+  - [ ] 4. 编写注册功能单元测试 (Unit Tests for Registration Logic)
+  - [ ] 5. 前端注册页面对接 (Frontend Integration - if applicable)
+- **备注**: 密码哈希算法选用 Argon2id。
+
+## 功能: 用户登录 (User Login)
+- **状态**: 待计划
+- **负责人**: 待分配
+- **功能点**:
+  - [ ] 1. 实现用户登录API端点
+  - [ ] 2. JWT令牌生成与验证
+  ...
+```
+
+**进度状态**: 
+*   `待计划 (To Be Planned)`
+*   `计划中 (Planned)`
+*   `开发中 (In Progress)`
+*   `待测试 (Pending Test)`
+*   `测试中 (In Test)`
+*   `已完成 (Completed)`
+*   `已阻塞 (Blocked)`
+
+**定期更新**: 团队应定期（如每日站会或每周回顾）更新功能点进度，确保信息透明，及时发现并解决问题。
+
+## 4. 版本控制
+
+*   使用 Git 进行版本控制。
+*   遵循分支策略（如 GitFlow 或 GitHub Flow）。
+*   提交信息应清晰、简洁，描述本次提交的目的。
+*   频繁提交小的、原子性的更改。
+
+通过遵循这些规范，C# 开发团队可以更有组织、更高效地交付高质量的软件。
+
