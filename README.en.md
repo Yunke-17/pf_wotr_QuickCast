@@ -57,6 +57,7 @@ This Mod is designed to be intuitive and easy to get started with.
 
 ### 4.2 Quick Cast Page Activation
 *   Press a specific key combination (e.g., `Ctrl + 1`) to activate the Level 1 spell page. The main action bar will immediately show the spells bound to the Level 1 page.
+*   **Attention: Before use, go to Options -> Controls in-game. Under the "Action Bar" heading, find and unbind "Additional Action Bar 1-6" unless you plan to customize their hotkeys.**
 *   If you open the spellbook at this time, its title will change to something like "QuickCast: Level 1", and the spellbook will only display spells of that level, adjusting its size accordingly.
 
 ### 4.3 Spell Binding
