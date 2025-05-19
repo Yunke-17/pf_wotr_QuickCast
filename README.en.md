@@ -81,8 +81,8 @@ This Mod is designed to be intuitive and easy to get started with.
 *   The spellbook title and interface will return to normal.
 
 ### 4.7 Post-Cast State Management
-*   **Default**: Remains on the current quick page after casting.
-*   **Optional**: Change in Mod settings to automatically return to the main hotbar after casting.
+*   **Default**: Change in Mod settings to automatically return to the main hotbar after casting.
+*   **Optional**: Remains on the current quick page after casting.
 
 ## 5. Customization & Configuration
 Open the Mod settings interface via UMM to:
