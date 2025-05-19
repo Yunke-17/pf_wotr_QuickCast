@@ -41,12 +41,13 @@ namespace QuickCast
                 return false; // Do not attempt to find or use ActionBarPCView in these states
             }
 
-            // Then, check for other game modes like GlobalMap, Kingdom, Dialog, and FullScreenUi using GameModeType
+            // Then, check for other game modes like GlobalMap and Kingdom using GameModeType
+            // This also handles the case where Game.Instance might be null initially
             if (Game.Instance != null && ShouldClearCachedViewForGameMode(Game.Instance.CurrentMode))
             {
                 if (CachedActionBarPCView != null)
                 {
-                    Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: Current mode is {Game.Instance.CurrentMode} (e.g., GlobalMap/Kingdom/Dialog/FullScreenUi), unsuitable for standard action bar. Clearing existing CachedActionBarPCView.");
+                    Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: Current mode is {Game.Instance.CurrentMode} (e.g., GlobalMap/Kingdom), unsuitable for standard action bar. Clearing existing CachedActionBarPCView.");
                     CachedActionBarPCView = null;
                 }
                 return false; // Do not attempt to find or use ActionBarPCView in these modes
@@ -74,7 +75,7 @@ namespace QuickCast
                 }
                 else
                 {
-                    Main.Log("[GameUIManager] 通过 FindObjectOfType 未能找到 ActionBarPCView 实例。UI可能尚未完全加载或不存在于当前场景。");
+                    Main.LogDebug("[GameUIManager] 通过 FindObjectOfType 未能找到 ActionBarPCView 实例。UI可能尚未完全加载或不存在于当前场景。");
                     return false;
                 }
             }
@@ -98,8 +99,10 @@ namespace QuickCast
             
             return gameMode == GameModeType.GlobalMap ||
                    gameMode == GameModeType.Kingdom ||
-                   gameMode == GameModeType.Dialog || 
-                   gameMode == GameModeType.FullScreenUi;
+                   gameMode == GameModeType.Dialog ||
+                   gameMode == GameModeType.FullScreenUi ||
+                   gameMode == GameModeType.Cutscene ||
+                   gameMode == GameModeType.CutsceneGlobalMap;
         }
 
         public static bool IsSpellbookInterfaceActive()
@@ -150,6 +153,11 @@ namespace QuickCast
                 }
             }
             return null;
+        }
+
+        public static void ClearCachedActionBarView()
+        {
+            CachedActionBarPCView = null;
         }
     }
 } 

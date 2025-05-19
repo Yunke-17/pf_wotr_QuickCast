@@ -709,48 +709,64 @@ namespace QuickCast
         // Handler for IGameModeHandler
         public void OnGameModeStart(GameModeType gameMode)
         {
-            _isStateTransitionInProgress = true; // Set state transition flag at the beginning of any game mode change
-            LogDebug($"[ABM OnGameModeStart] Game mode START: {gameMode}. QC Active: {_isQuickCastModeActive}, PageToRestoreDialog: {_pageToRestoreAfterDialog}");
+            LogDebug($"[ABM OnGameModeStart] Entering game mode: {gameMode}. QuickCast active: {_isQuickCastModeActive}, Page to restore: {_pageToRestoreAfterDialog}");
+            _isStateTransitionInProgress = false; // Reset at the beginning of any mode start
 
-            if (gameMode == GameModeType.Dialog || gameMode == GameModeType.FullScreenUi)
+            // Check if the current game mode is one where QuickCast should be temporarily suspended.
+            if (gameMode == GameModeType.Dialog || 
+                gameMode == GameModeType.FullScreenUi ||
+                gameMode == GameModeType.Cutscene ||
+                gameMode == GameModeType.CutsceneGlobalMap)
             {
                 if (_isQuickCastModeActive)
                 {
-                    LogDebug($"[ABM OnGameModeStart] {gameMode} mode started. Saving current QuickCast page: {_activeQuickCastPage} for potential restoration.");
                     _pageToRestoreAfterDialog = _activeQuickCastPage;
+                    LogDebug($"[ABM OnGameModeStart] Mode {gameMode}: QuickCast was active on page {_activeQuickCastPage}. Storing for restoration.");
+                    // Deactivation will be handled by Update if _isStateTransitionInProgress is true
                 }
                 else
                 {
-                     _pageToRestoreAfterDialog = -1;
+                    _pageToRestoreAfterDialog = -1;
+                    LogDebug($"[ABM OnGameModeStart] Mode {gameMode}: QuickCast was not active.");
                 }
+                _isStateTransitionInProgress = true; // Mark that we are in a special UI state
+                return; 
             }
-            else if (_pageToRestoreAfterDialog != -1 &&
-                     (gameMode == GameModeType.Default || gameMode == GameModeType.TacticalCombat || gameMode == GameModeType.GlobalMap))
+            // For other game modes, if a deferred restore was queued, try to execute it.
+            // This handles cases where we exit a prohibitive mode and then quickly enter another non-prohibitive one.
+            else if (_deferredRestoreQueued && _pageToRestoreDeferred != -1)
             {
-                LogDebug($"[ABM OnGameModeStart] Normal game mode {gameMode} started. Queuing deferred restoration of QuickCast page: {_pageToRestoreAfterDialog} (from previous Dialog/FullScreenUI).");
-                _deferredRestoreQueued = true;
-                _pageToRestoreDeferred = _pageToRestoreAfterDialog;
-                _pageToRestoreAfterDialog = -1; 
-            }
-            else
-            {
-                if (!_deferredRestoreQueued) { 
-                    _isStateTransitionInProgress = false;
-                    LogDebug($"[ABM OnGameModeStart] Game mode {gameMode} started. No specific QC action or pending restore. Cleared _isStateTransitionInProgress.");
-                } else {
-                    LogDebug($"[ABM OnGameModeStart] Game mode {gameMode} started. No specific QC action, but _deferredRestoreQueued is true. _isStateTransitionInProgress remains.");
-                }
+                LogDebug($"[ABM OnGameModeStart] Mode {gameMode}: Executing deferred restore to page {_pageToRestoreDeferred}.");
+                TryActivateQuickCastMode(_pageToRestoreDeferred, false);
+                _deferredRestoreQueued = false;
+                _pageToRestoreDeferred = -1;
             }
         }
 
         public void OnGameModeStop(GameModeType gameMode)
         {
-            LogDebug($"[ABM OnGameModeStop] Game mode STOP: {gameMode}. QC Active: {_isQuickCastModeActive}, PageToRestoreDialog: {_pageToRestoreAfterDialog}, DeferredRestoreQueued: {_deferredRestoreQueued}, PageToRestoreDeferred: {_pageToRestoreDeferred}");
-            if (!_deferredRestoreQueued) {
-                _isStateTransitionInProgress = false;
-                LogDebug($"[ABM OnGameModeStop] Game mode {gameMode} stopped. No deferred restore was queued by a subsequent OnGameModeStart. Cleared _isStateTransitionInProgress.");
-            } else {
-                LogDebug($"[ABM OnGameModeStop] Game mode {gameMode} stopped. _deferredRestoreQueued is true. _isStateTransitionInProgress remains for Update() to handle.");
+            LogDebug($"[ABM OnGameModeStop] Exiting game mode: {gameMode}. Page to restore: {_pageToRestoreAfterDialog}, Deferred queued: {_deferredRestoreQueued}, Deferred page: {_pageToRestoreDeferred}");
+
+            // When exiting modes where QuickCast was suspended.
+            if (gameMode == GameModeType.Dialog || 
+                gameMode == GameModeType.FullScreenUi ||
+                gameMode == GameModeType.Cutscene ||
+                gameMode == GameModeType.CutsceneGlobalMap)
+            {
+                _isStateTransitionInProgress = false; // Exiting the special UI state
+
+                if (_pageToRestoreAfterDialog != -1)
+                {
+                    // Instead of deferring, try to restore immediately.
+                    // The Update loop's _isStateTransitionInProgress check will no longer block activation.
+                    LogDebug($"[ABM OnGameModeStop] Mode {gameMode}: Attempting to restore QuickCast to page {_pageToRestoreAfterDialog}.");
+                    TryActivateQuickCastMode(_pageToRestoreAfterDialog, false); 
+                }
+                else
+                {
+                    LogDebug($"[ABM OnGameModeStop] Mode {gameMode}: No QuickCast page to restore.");
+                }
+                _pageToRestoreAfterDialog = -1; // Clear the restore request
             }
         }
 
