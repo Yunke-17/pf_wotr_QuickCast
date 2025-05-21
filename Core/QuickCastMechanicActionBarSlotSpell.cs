@@ -102,6 +102,19 @@ namespace QuickCast
         {
             return this.Spell?.ShortenedDescription ?? "";
         }
+
+        public override int GetLevel()
+        {
+            if (this.Spell == null || this.Spell.Spellbook == null)
+            {
+                Main.LogDebug($"[QCMSlotSpell GetLevel] Spell or Spell.Spellbook is null. Spell name: {this.Spell?.Name}. Fallback to Spell.SpellLevel or -1.");
+                return this.Spell?.SpellLevel ?? -1; 
+            }
+
+            int finalLevel = this.Spell.Spellbook.GetSpellLevel(this.Spell);
+            Main.LogDebug($"[QCMSlotSpell GetLevel] Spell: {this.Spell.Name}, Calculated Final Level: {finalLevel} (Base: {this.Spell.SpellLevel}, MetamagicCost: {this.Spell.MetamagicData?.SpellLevelCost ?? 0}, Heighten: {this.Spell.MetamagicData?.HeightenLevel ?? 0})");
+            return finalLevel;
+        }
         #endregion
 
         #region 重写基类属性与方法 (状态与行为)

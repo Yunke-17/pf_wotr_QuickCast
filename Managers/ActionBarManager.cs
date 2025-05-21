@@ -17,6 +17,8 @@ using Kingmaker.UnitLogic.Abilities.Blueprints;
 using Kingmaker.UnitLogic.Commands;
 using UnityEngine.UI;
 using TMPro;
+using Kingmaker.UI.Common;
+using Kingmaker.Blueprints.Root.Strings;
 
 namespace QuickCast
 {
@@ -188,7 +190,7 @@ namespace QuickCast
 
             // 获取当前角色的绑定数据
             var currentCharacterSpellIdBindings = BindingDataManager.GetCurrentCharacterBindings(false); // 使用 BindingDataManager
-            Dictionary<int, string> currentLevelSpellIdBindings = null;
+            Dictionary<int, Tuple<string, int, int, int, int>> currentLevelSpellIdBindings = null;
 
             if (currentCharacterSpellIdBindings != null && currentCharacterSpellIdBindings.TryGetValue(_activeQuickCastPage, out var bindingsForLevel))
             {
@@ -217,26 +219,32 @@ namespace QuickCast
                     {
                         AbilityData boundAbility = null;
                         // 尝试从 currentLevelBindings 中获取当前 logicalSlotIndex 的绑定法术
-                        if (currentLevelSpellIdBindings != null && currentLevelSpellIdBindings.TryGetValue(logicalSlotIndexToRefresh, out string spellGuid))
+                        if (currentLevelSpellIdBindings != null && currentLevelSpellIdBindings.TryGetValue(logicalSlotIndexToRefresh, out var spellInfo))
                         {
-                            boundAbility = BindingDataManager.GetAbilityDataFromSpellGuid(currentUnit, spellGuid); // 使用 BindingDataManager
-                        }
+                            string spellGuid = spellInfo.Item1;
+                            int metamagicMask = spellInfo.Item2;
+                            int targetHeightenLevel = spellInfo.Item3;
+                            int decorationColor = spellInfo.Item4;
+                            int decorationBorder = spellInfo.Item5;
 
-                        if (boundAbility != null)
-                        {
-                            var newSpellSlot = new QuickCastMechanicActionBarSlotSpell(boundAbility, currentUnit);
-                            slotVM.SetMechanicSlot(newSpellSlot);
-                            RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode());
-                            LogDebug($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 为法术：{boundAbility.Name}。哈希值：{newSpellSlot.GetHashCode()}。");
+                            boundAbility = BindingDataManager.GetBoundAbilityData(currentUnit, spellGuid, metamagicMask, targetHeightenLevel, decorationColor, decorationBorder);
 
-                            string iconName = slotVM.Icon.Value != null ? slotVM.Icon.Value.name : "null";
-                            string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null";
-                            LogDebug($"[ABM] 为UI槽位索引 {logicalSlotIndexToRefresh} 设置 SetMechanicSlot 后：VM报告图标为 {iconName}，法术为 {spellName}");
-                        }
-                        else
-                        {
-                            slotVM.SetMechanicSlot(_emptySlotPlaceholder);
-                            LogDebug($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 并清空（在等级 {_activeQuickCastPage} 上，逻辑槽位 {logicalSlotIndexToRefresh} 没有绑定）。");
+                            if (boundAbility != null)
+                            {
+                                var newSpellSlot = new QuickCastMechanicActionBarSlotSpell(boundAbility, currentUnit);
+                                slotVM.SetMechanicSlot(newSpellSlot);
+                                RecentlyBoundSlotHashes.Add(newSpellSlot.GetHashCode());
+                                LogDebug($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 为法术：{boundAbility.Name}。哈希值：{newSpellSlot.GetHashCode()}。");
+
+                                string iconName = slotVM.Icon.Value != null ? slotVM.Icon.Value.name : "null";
+                                string spellName = slotVM.MechanicActionBarSlot?.GetTitle() ?? "null";
+                                LogDebug($"[ABM] 为UI槽位索引 {logicalSlotIndexToRefresh} 设置 SetMechanicSlot 后：VM报告图标为 {iconName}，法术为 {spellName}");
+                            }
+                            else
+                            {
+                                slotVM.SetMechanicSlot(_emptySlotPlaceholder);
+                                LogDebug($"[ABM] 已刷新UI槽位索引 {logicalSlotIndexToRefresh} 并清空（在等级 {_activeQuickCastPage} 上，逻辑槽位 {logicalSlotIndexToRefresh} 没有绑定）。");
+                            }
                         }
                     }
                 }
@@ -274,25 +282,26 @@ namespace QuickCast
 
             if (!currentCharacterBindings.ContainsKey(spellLevel))
             {
-                currentCharacterBindings[spellLevel] = new Dictionary<int, string>();
+                currentCharacterBindings[spellLevel] = new Dictionary<int, Tuple<string, int, int, int, int>>();
             }
-            currentCharacterBindings[spellLevel][logicalSlotIndex] = spellData.Blueprint.AssetGuidThreadSafe; 
-            LogDebug($"[ABM] 法术GUID '{spellData.Blueprint.AssetGuidThreadSafe}' ({spellData.Name}) 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
+            int metamagicMask = (spellData.MetamagicData != null) ? (int)spellData.MetamagicData.MetamagicMask : 0;
+            int targetHeightenLevel = 0; // Default to 0 (not heightened or heighten info not applicable)
+            int decorationColor = spellData.DecorationColorNumber;
+            int decorationBorder = spellData.DecorationBorderNumber;
 
-            LogDebug($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
-            var currentSpellIdBindingsForLogging = BindingDataManager.GetCurrentCharacterBindings(false); // 使用 BindingDataManager
-            if (currentSpellIdBindingsForLogging != null && currentSpellIdBindingsForLogging.TryGetValue(spellLevel, out var levelBindingsToLog))
+            if (spellData.MetamagicData != null)
             {
-                foreach (var kvp in levelBindingsToLog)
+                // If Metamagic.Heighten is applied, store the specific level it's heightened to.
+                if ((spellData.MetamagicData.MetamagicMask & Metamagic.Heighten) == Metamagic.Heighten)
                 {
-                    var spellForLog = BindingDataManager.GetAbilityDataFromSpellGuid(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, kvp.Value); // 使用 BindingDataManager
-                    LogDebug($"[ABM BindDetails]   逻辑槽位：{kvp.Key}, 法术GUID：{kvp.Value}, 法术名：{spellForLog?.Name ?? "NULL/Unknown"}");
+                    targetHeightenLevel = spellData.MetamagicData.HeightenLevel;
                 }
             }
-            else
-            {
-                LogDebug("[ABM BindDetails]   更新后未找到此等级的绑定。");
-            }
+
+            currentCharacterBindings[spellLevel][logicalSlotIndex] = Tuple.Create(spellData.Blueprint.AssetGuidThreadSafe, metamagicMask, targetHeightenLevel, decorationColor, decorationBorder);
+            LogDebug($"[ABM] 法术GUID '{spellData.Blueprint.AssetGuidThreadSafe}' (超魔: {metamagicMask}, 升阶目标: {targetHeightenLevel}) ({spellData.Name}) 已绑定到角色 {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName} 的快捷施法等级 {spellLevel}，逻辑槽位 {logicalSlotIndex}。");
+
+            LogAllBindingsForLevel(spellLevel, currentCharacterBindings[spellLevel]);
 
             if (_isQuickCastModeActive && _activeQuickCastPage == spellLevel)
             {
@@ -308,6 +317,23 @@ namespace QuickCast
             else
             {
                 LogDebug("[ABM BindSpell] UISoundController.Instance 为空，无法为绑定播放音效。");
+            }
+        }
+
+        private void LogAllBindingsForLevel(int spellLevel, Dictionary<int, Tuple<string, int, int, int, int>> levelBindings)
+        {
+            if (levelBindings == null || levelBindings.Count == 0)
+            {
+                LogDebug($"[ABM BindDetails] 等级 {spellLevel} 没有绑定。");
+                return;
+            }
+            LogDebug($"[ABM BindDetails] 等级 {spellLevel} 的当前绑定：");
+            foreach (var kvp in levelBindings)
+            {
+                var spellInfo = kvp.Value;
+                AbilityData tempAbility = BindingDataManager.GetBoundAbilityData(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, spellInfo.Item1, spellInfo.Item2, spellInfo.Item3, spellInfo.Item4, spellInfo.Item5); // Use the new GetBoundAbilityData
+                string spellName = tempAbility?.Name ?? "Unknown Spell (Failed to reconstruct)";
+                LogDebug($"  逻辑槽位：{kvp.Key}, 法术GUID：{spellInfo.Item1}, 超魔：{spellInfo.Item2}, 升阶目标：{spellInfo.Item3}, 法术名：{spellName}");
             }
         }
 
@@ -902,8 +928,8 @@ namespace QuickCast
             {
                 if (bindingsForLevel.ContainsKey(logicalSlotIndex))
                 {
-                    string spellGuidToRemove = bindingsForLevel[logicalSlotIndex];
-                    string spellName = BindingDataManager.GetAbilityDataFromSpellGuid(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, spellGuidToRemove)?.Name ?? $"Unknown Spell (GUID: {spellGuidToRemove})";
+                    Tuple<string, int, int, int, int> spellInfoToRemove = bindingsForLevel[logicalSlotIndex];
+                    string spellName = BindingDataManager.GetBoundAbilityData(Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter, spellInfoToRemove.Item1, spellInfoToRemove.Item2, spellInfoToRemove.Item3, spellInfoToRemove.Item4, spellInfoToRemove.Item5)?.Name ?? $"Unknown Spell (GUID: {spellInfoToRemove.Item1}, Meta: {spellInfoToRemove.Item2}, Target Heighten Level: {spellInfoToRemove.Item3}, Decoration Color: {spellInfoToRemove.Item4}, Decoration Border: {spellInfoToRemove.Item5})";
                     
                     bindingsForLevel.Remove(logicalSlotIndex);
                     LogDebug($"[ABM UnbindSpell] Spell '{spellName}' unbound from character {Game.Instance?.SelectionCharacter?.CurrentSelectedCharacter?.CharacterName}, QuickCast page {_activeQuickCastPage}, logical slot {logicalSlotIndex} due to UI clear."); // 保留，重要
@@ -943,8 +969,14 @@ namespace QuickCast
             var spellbook = currentUnit.Descriptor?.Spellbooks?.FirstOrDefault();
             if (spellbook == null || targetLevel > spellbook.MaxSpellLevel)
             {
-                LogDebug($"[ABM ForceSyncSpellbookDisplay] Unit {currentUnit.CharacterName} cannot use spell level {targetLevel}. Aborting sync.");
+                //This logic needs to be adjusted because spell level can be 0 for cantrips, and 10 for mythic spells, which are valid but can be > MaxSpellLevel for some spellbooks.
+                //However, the quick cast page should still be accessible if it's 0 or 10, regardless of the spellbook's max conventional spell level.
+                //We will only block if targetLevel is NOT 0 or 10 AND it's greater than MaxSpellLevel.
+                if (!(targetLevel == 0 || targetLevel == 10) && (spellbook == null || targetLevel > spellbook.MaxSpellLevel))
+                {
+                    LogDebug($"[ABM ForceSyncSpellbookDisplay] Unit {currentUnit.CharacterName} cannot use spell level {targetLevel} (Max: {spellbook?.MaxSpellLevel ?? -1}). Aborting sync.");
                 return;
+                }
             }
 
             try
