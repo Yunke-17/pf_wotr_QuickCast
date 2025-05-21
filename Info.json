@@ -2,7 +2,7 @@
   "Id": "QuickCastSystem",
   "DisplayName": "Quick Cast System",
   "Author": "ToisnaLey",
-  "Version": "1.0.1",
+  "Version": "1.0.2",
   "AssemblyName": "QuickCast.dll",
   "EntryMethod": "QuickCast.Main.Load",
   "HomePage": "https://github.com/Yunke-17/pf_wotr_QuickCast",
