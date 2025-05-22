@@ -463,7 +463,7 @@ namespace QuickCast
             {
                 var actionBarVMToSetLevel = game?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
 
-                if (spellsGroupInstance == null) { Log("[ABM TryActivate] 错误：spellsGroupInstance为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
+                if (spellsGroupInstance == null) { Log("[ABM TryActivate] 错误：spellsGroupinstance为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
                 if (actionBarVMToSetLevel == null) { Log("[ABM TryActivate] 错误：actionBarVMToSetLevel为空(重复检查)"); RestoreMainActionBarDisplay(); _activeQuickCastPage = -1; _isQuickCastModeActive = false; return false; } //关键
                 
                 LogDebug("[ABM TryActivate] 尝试直接调用 m_SpellsGroup.SetVisible(true, true)。");
@@ -561,8 +561,55 @@ namespace QuickCast
 
             try
             {
-                var knownSpells = spellbook.GetKnownSpells(spellLevel);
-                int actualSpellCount = knownSpells?.Count ?? 0;
+                int actualSpellCount = 0;
+                if (spellbook != null)
+                {
+                    HashSet<AbilityData> countedAbilities = new HashSet<AbilityData>();
+
+                    // 1. Process spells whose base level is the target spellLevel
+                    foreach (var abilityData in spellbook.GetKnownSpells(spellLevel))
+                    {
+                        if (abilityData != null && spellbook.GetSpellLevel(abilityData) == spellLevel) 
+                        {
+                            countedAbilities.Add(abilityData);
+                        }
+                    }
+                    foreach (var abilityData in spellbook.GetSpecialSpells(spellLevel))
+                    {
+                        if (abilityData != null && spellbook.GetSpellLevel(abilityData) == spellLevel)
+                        {
+                            countedAbilities.Add(abilityData);
+                        }
+                    }
+                    foreach (var abilityData in spellbook.GetCustomSpells(spellLevel))
+                    {
+                        if (abilityData != null && spellbook.GetSpellLevel(abilityData) == spellLevel)
+                        {
+                            countedAbilities.Add(abilityData);
+                        }
+                    }
+
+                    // 2. Process all known spells to catch those heightened to the target spellLevel
+                    foreach (var abilityData in spellbook.GetAllKnownSpells())
+                    {
+                        if (abilityData != null && spellbook.GetSpellLevel(abilityData) == spellLevel)
+                        {
+                            countedAbilities.Add(abilityData);
+                        }
+                    }
+                    
+                    // 3. Process all custom spells again to catch those heightened to the target spellLevel
+                    // (GetAllKnownSpells might not include all sources like GetAllCustomSpells implicitly)
+                    foreach (var abilityData in spellbook.GetAllCustomSpells())
+                    {
+                        if (abilityData != null && spellbook.GetSpellLevel(abilityData) == spellLevel)
+                        {
+                            countedAbilities.Add(abilityData);
+                        }
+                    }
+                    
+                    actualSpellCount = countedAbilities.Count;
+                }
                 
                 var spellSlotsPCList = spellsGroupInstance.m_SlotsList;
                 if (spellSlotsPCList != null)
