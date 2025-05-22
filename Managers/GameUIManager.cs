@@ -100,7 +100,6 @@ namespace QuickCast
             return gameMode == GameModeType.GlobalMap ||
                    gameMode == GameModeType.Kingdom ||
                    gameMode == GameModeType.Dialog ||
-                   gameMode == GameModeType.FullScreenUi ||
                    gameMode == GameModeType.Cutscene ||
                    gameMode == GameModeType.CutsceneGlobalMap;
         }
