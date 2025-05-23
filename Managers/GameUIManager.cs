@@ -8,6 +8,7 @@ using Kingmaker.UI.MVVM._VM.ActionBar; // For ActionBarSlotVM
 using Kingmaker.UI.UnitSettings; // For MechanicActionBarSlotSpell
 using Kingmaker.UI.MVVM; // For RootUIContext
 using Kingmaker.EntitySystem.Persistence; // For LoadingProcess
+using Kingmaker.UI.MVVM._VM.ServiceWindows;
 
 namespace QuickCast
 {
@@ -30,16 +31,42 @@ namespace QuickCast
         public static bool EnsureCachedActionBarView()
         {
             // Check for MainMenu and LoadingScreen states first using their specific properties
-            if ((RootUIContext.Instance != null && RootUIContext.Instance.IsMainMenu) ||
-                (LoadingProcess.Instance != null && LoadingProcess.Instance.IsLoadingScreenActive))
+            if ((RootUIContext.Instance != null && RootUIContext.Instance.IsMainMenu))
             {
-                if (CachedActionBarPCView != null)
+                if (CachedActionBarPCView != null) 
                 {
-                    Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: Currently in MainMenu or LoadingScreen. Clearing existing CachedActionBarPCView.");
+                    Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: MainMenu active. Clearing CachedActionBarPCView.");
                     CachedActionBarPCView = null;
                 }
                 return false; // Do not attempt to find or use ActionBarPCView in these states
             }
+            if ((LoadingProcess.Instance != null && LoadingProcess.Instance.IsLoadingScreenActive))
+            {
+                if (CachedActionBarPCView != null)
+                {
+                    Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: LoadingScreen active. Clearing CachedActionBarPCView.");
+                    CachedActionBarPCView = null;
+                }
+                return false;
+            }
+
+            // New check: If RootUIContext indicates UI is blocked or in a state not conducive to ActionBarPCView access
+            var rootUiContext = RootUIContext.Instance;
+            if (rootUiContext != null && 
+                (rootUiContext.AdditionalBlockEscMenu || 
+                 rootUiContext.SaveLoadIsShown || 
+                 rootUiContext.ModalMessageWindowShown ||
+                 rootUiContext.IsBugReportOpen ||
+                 (rootUiContext.CurrentServiceWindow != ServiceWindowsType.None && 
+                  rootUiContext.CurrentServiceWindow != ServiceWindowsType.Spellbook && 
+                  rootUiContext.CurrentServiceWindow != ServiceWindowsType.CharacterInfo) )) 
+            {
+                // Main.LogDebug($"[GameUIManager] EnsureCachedActionBarView: UI is blocked by modal or specific service window ({rootUiContext.CurrentServiceWindow}). Skipping FindObjectOfType.");
+                // It might be prudent to clear the cache here if it exists, as it might become stale.
+                // if (CachedActionBarPCView != null) { Main.LogDebug("[GameUIManager] UI blocked, clearing potentially stale CachedActionBarPCView."); CachedActionBarPCView = null; }
+                return false; 
+            }
+
 
             // Then, check for other game modes like GlobalMap and Kingdom using GameModeType
             // This also handles the case where Game.Instance might be null initially
@@ -55,15 +82,12 @@ namespace QuickCast
 
             if (CachedActionBarPCView == null)
             {
-                Main.LogDebug("[GameUIManager] CachedActionBarPCView 为空，尝试通过 FindObjectOfType 查找...");
+                Main.LogDebug("[GameUIManager] CachedActionBarPCView is null, attempting FindObjectOfType<ActionBarPCView>().");
                 
-                // At this point, we are not in MainMenu, LoadingScreen, GlobalMap, or Kingdom (checked above).
-                // So, it should be generally safe to try finding the view if it's truly null.
-
                 CachedActionBarPCView = UnityEngine.Object.FindObjectOfType<ActionBarPCView>();
                 if (CachedActionBarPCView != null)
                 {
-                    Main.LogDebug($"[GameUIManager] 成功通过 FindObjectOfType 找到并缓存了 ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
+                    Main.LogDebug($"[GameUIManager] Successfully found and cached ActionBarPCView: {CachedActionBarPCView.gameObject.name}");
 
                     if (CachedActionBarPCView.m_SpellsGroup == null)
                     {
@@ -71,11 +95,11 @@ namespace QuickCast
                         CachedActionBarPCView = null; 
                         return false;
                     }
-                    Main.LogDebug($"[GameUIManager] Found ActionBarPCView instance with m_SpellsGroup. Caching it.");
+                    // Main.LogDebug($"[GameUIManager] Found ActionBarPCView instance with m_SpellsGroup. Caching it."); // Redundant, success implies caching
                 }
                 else
                 {
-                    Main.LogDebug("[GameUIManager] 通过 FindObjectOfType 未能找到 ActionBarPCView 实例。UI可能尚未完全加载或不存在于当前场景。");
+                    Main.LogDebug("[GameUIManager] FindObjectOfType<ActionBarPCView>() failed. UI might not be loaded or in expected state.");
                     return false;
                 }
             }
@@ -97,11 +121,12 @@ namespace QuickCast
                 return true; 
             }
             
+            // These modes have fundamentally different UIs where the standard ActionBarPCView is not present or relevant.
             return gameMode == GameModeType.GlobalMap ||
-                   gameMode == GameModeType.Kingdom ||
-                   gameMode == GameModeType.Dialog ||
-                   gameMode == GameModeType.Cutscene ||
-                   gameMode == GameModeType.CutsceneGlobalMap;
+                   gameMode == GameModeType.Kingdom;
+                   // gameMode == GameModeType.Dialog || // Dialog, Cutscene etc. are handled by more granular checks in Main.OnUpdate or EnsureCachedActionBarView
+                   // gameMode == GameModeType.Cutscene ||
+                   // gameMode == GameModeType.CutsceneGlobalMap;
         }
 
         public static bool IsSpellbookInterfaceActive()
@@ -156,6 +181,7 @@ namespace QuickCast
 
         public static void ClearCachedActionBarView()
         {
+            Main.LogDebug("[GameUIManager] ClearCachedActionBarView called."); // Add log to see when this is explicitly called
             CachedActionBarPCView = null;
         }
     }

@@ -20,6 +20,8 @@ using Kingmaker.UI.UnitSettings; // 为 MechanicActionBarSlotSpell 添加
 using Owlcat.Runtime.UI.Controls.Button; // 为 OwlcatMultiButton 添加
 using Kingmaker.UI.MVVM; // 为 ViewBase 添加
 using UniRx; // 修正 UniRx 命名空间
+using Kingmaker.UI.MVVM._VM.ServiceWindows;
+using Kingmaker.UI.FullScreenUITypes;
 
 namespace QuickCast
 {
@@ -140,55 +142,103 @@ namespace QuickCast
                 // 但如果GameUIManager.CachedActionBarPCView存在，且游戏实例不存在了（比如退回主菜单的过程），则可以清除
                 if (GameUIManager.GetCachedActionBarPCView() != null && Game.Instance == null) 
                 {
-                    LogDebug("[Main OnUpdate] Game.Instance 为空 (可能已退回主菜单)，清除 GameUIManager.CachedActionBarPCView。");
-                    GameUIManager.CachedActionBarPCView = null; // 直接通过GameUIManager访问和设置
-                    // GameUIManager._spellsGroupFieldInfo = null; // REMOVED: No longer managing this FieldInfo here
+                    LogDebug("[Main OnUpdate] Game.Instance is null, clearing CachedActionBarPCView.");
+                    GameUIManager.ClearCachedActionBarView(); // 使用新的公共方法
                 }
                 return; 
             }
 
-            // 接下来，检查是否处于明确应该清除缓存的游戏模式
+            var rootUiContext = Game.Instance.RootUiContext;
             GameModeType currentMode = Game.Instance.CurrentMode;
-            if (GameUIManager.ShouldClearCachedViewForGameMode(currentMode)) // 使用新的辅助方法
+            FullScreenUIType currentFullScreenUIType = FullScreenUIType.Unknown;
+
+            if (currentMode == GameModeType.FullScreenUi)
+            {
+                // Try to get current FullScreenUIType. This is a bit of a guess without direct access or a clear public API.
+                // Game.Instance.Vendor.IsTrading is a good specific check.
+                // For others, we rely on RootUIContext properties or GameModeType.
+                if (Game.Instance.Vendor != null && Game.Instance.Vendor.IsTrading)
+                {
+                    currentFullScreenUIType = FullScreenUIType.Vendor;
+                }
+                // else if (rootUiContext.CurrentServiceWindow == ServiceWindowsType.CharacterInfo) // Example, if needed
+                // {
+                //     currentFullScreenUIType = FullScreenUIType.CharacterScreen;
+                // }
+                // else if (rootUiContext.CurrentServiceWindow == ServiceWindowsType.Spellbook)
+                // {
+                //     currentFullScreenUIType = FullScreenUIType.SpellBook;
+                // }
+                // More specific types can be added if there's a reliable way to get them.
+            }
+
+            bool shouldSkipQuickCastLogic = false;
+            if (rootUiContext.AdditionalBlockEscMenu || 
+                rootUiContext.SaveLoadIsShown ||
+                rootUiContext.ModalMessageWindowShown ||
+                rootUiContext.IsBugReportOpen ||
+                (rootUiContext.CurrentServiceWindow != ServiceWindowsType.None && 
+                 rootUiContext.CurrentServiceWindow != ServiceWindowsType.Spellbook && 
+                 rootUiContext.CurrentServiceWindow != ServiceWindowsType.CharacterInfo) || // Allow Spellbook and CharacterInfo for binding/viewing
+                currentMode == GameModeType.Cutscene ||
+                currentMode == GameModeType.CutsceneGlobalMap ||
+                currentMode == GameModeType.Dialog ||
+                currentMode == GameModeType.GlobalMap ||
+                currentMode == GameModeType.Kingdom ||
+                currentMode == GameModeType.Rest ||
+                (currentMode == GameModeType.FullScreenUi && 
+                    // We want to allow QC logic if it's CharacterScreen or SpellBook full screen UI
+                    // For other FullScreenUI types (like Vendor), skip QC logic.
+                    !(currentFullScreenUIType == FullScreenUIType.CharacterScreen || currentFullScreenUIType == FullScreenUIType.SpellBook || currentFullScreenUIType == FullScreenUIType.Unknown) && // If Unknown, it's safer to skip unless explicitly allowed
+                    (Game.Instance.Vendor != null && Game.Instance.Vendor.IsTrading) // Double check for vendor specifically
+                )
+            )
+            {
+                shouldSkipQuickCastLogic = true;
+                // if (currentMode == GameModeType.FullScreenUi) {
+                //     LogDebug($"[Main OnUpdate] FullScreenUI detected. Type: {currentFullScreenUIType}. Skipping QC Logic: {shouldSkipQuickCastLogic}");
+                // }
+            }
+            
+            // If a mode dictates clearing the cache, and it's not already null, clear it.
+            // Also, ensure shouldSkipQuickCastLogic is true in this case.
+            if (GameUIManager.ShouldClearCachedViewForGameMode(currentMode))
             {
                 if (GameUIManager.GetCachedActionBarPCView() != null)
                 {
-                    LogDebug($"[Main OnUpdate] 游戏处于 {currentMode} 模式 (判断为应清除缓存)，清除 GameUIManager.CachedActionBarPCView。");
-                    GameUIManager.CachedActionBarPCView = null;  // 直接通过GameUIManager访问和设置
-                    // GameUIManager._spellsGroupFieldInfo = null; // REMOVED: No longer managing this FieldInfo here
+                    LogDebug($"[Main OnUpdate] Game is in {currentMode} mode (should clear cache). Clearing CachedActionBarPCView.");
+                    GameUIManager.ClearCachedActionBarView(); // Use new public method
                 }
-                return; // 在这些模式下不执行后续逻辑
+                shouldSkipQuickCastLogic = true; 
             }
 
-            // 检查是否处于不应执行Mod核心逻辑的游戏模式（None）
-            if (currentMode == GameModeType.None)
+            if (shouldSkipQuickCastLogic)
             {
-                // GameModeType.None 是一个比较模糊的状态，可能在场景切换的瞬间出现。
-                // 通常不建议在此状态下执行太多操作，但也不一定需要清除 ActionBarPCView，
-                // 因为可能只是短暂过渡。如果确实需要，可以取消下面的注释。
-                // Log("[Main OnUpdate] 游戏处于 GameModeType.None 模式，暂时跳过 QuickCast 逻辑。");
-                return; // 如果在None模式下不应执行任何操作
+                // LogDebug($"[Main OnUpdate] Skipping EnsureCachedActionBarView and InputManager.HandleInput due to UI state or game mode. Current Mode: {currentMode}, FullScreenUIType: {currentFullScreenUIType}, ServiceWindow: {rootUiContext.CurrentServiceWindow}");
+            }
+            else // Only attempt to get/use ActionBarPCView if not in a skipping state
+            {
+                if (GameUIManager.GetCachedActionBarPCView() == null)
+                {
+                    // LogDebug($"[Main OnUpdate] Attempting to ensure cached action bar view. Current Mode: {currentMode}");
+                    GameUIManager.EnsureCachedActionBarView(); 
+                    if (GameUIManager.GetCachedActionBarPCView() == null)
+                    {
+                        // LogDebug($"[Main OnUpdate] CachedActionBarPCView still null after Ensure. Current Mode: {currentMode}. ActionBarManager.Update will still run.");
+                        if (_actionBarManager != null) _actionBarManager.Update(); // Still call ABM update for its internal logic if QC logic is skipped due to no view
+                        return; // Return early if view is not available
+                    }
+                }
+                // LogDebug($"[Main OnUpdate] Proceeding with InputManager.HandleInput. Current Mode: {currentMode}");
+                InputManager.HandleInput();
             }
             
-            // 到这里，我们应该处于一个可以运行Mod逻辑的游戏模式 (Default, TacticalCombat, Dialog, FullScreenUi (in-game), etc.)
-            // FullScreenUi (游戏内全屏，如角色面板) 不应清除 CachedActionBarPCView，
-            // 因为关闭后需要它来恢复UI。
-
-            if (GameUIManager.GetCachedActionBarPCView() == null)
+            if (_actionBarManager != null)
             {
-                GameUIManager.EnsureCachedActionBarView(); 
-                if (GameUIManager.GetCachedActionBarPCView() == null) // 如果尝试获取后仍然为空，则此帧无法继续
-                {
-                     return;
-                }
+                _actionBarManager.Update();
             }
-           
-            if (_actionBarManager == null) return;
-
-            _actionBarManager.Update(); // Call ActionBarManager's Update method
 
             ActionBarManager.ClearRecentlyBoundSlotsIfNewFrame();
-            InputManager.HandleInput();
         }
 
         // UMM设置界面的绘制回调
