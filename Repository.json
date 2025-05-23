@@ -2,7 +2,8 @@
   "Release": [
     {
       "Id": "QuickCastSystem",
-      "Version": "1.0.3"
+      "Version": "1.0.3",
+      "DownloadUrl": "https://github.com/Yunke-17/pf_wotr_QuickCast/releases/download/v1.0.3/QuickCastSystemv1.0.3.zip"
     }
   ]
 }
