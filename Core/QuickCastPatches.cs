@@ -5,6 +5,7 @@ using Kingmaker.UnitLogic.Abilities;
 using Kingmaker.UI.UnitSettings;
 using Kingmaker; // 用于 Game
 using UnityEngine; // 用于 KeyCode, Input
+using Kingmaker.EntitySystem.Entities;
 
 namespace QuickCast
 {
@@ -17,6 +18,8 @@ namespace QuickCast
         // 静态字段，用于保存对法术书UI中当前悬停的槽位VM的引用
         // 注意：当法术书UI关闭或QC模式结束时，需要适当地清除此字段。
         public static ActionBarSlotVM CurrentlyHoveredSpellbookSlotVM = null;
+            // 新增：用于标记游戏是否正在内部批量刷新行动栏
+        public static bool IsGameInternallyRefreshingActionBar = false; 
         #endregion
 
         #region ActionBarSlotVM 补丁 (法术书悬停检测与点击控制)
@@ -161,34 +164,62 @@ namespace QuickCast
         {
             static void Postfix(Kingmaker.UI.MVVM._VM.ActionBar.ActionBarSlotVM __instance, MechanicActionBarSlot abs)
             {
-                if (Main.IsEnabled && Main._actionBarManager != null && 
-                    Main._actionBarManager.IsQuickCastModeActive && 
-                    !Main._actionBarManager.IsInternalBarUpdateInProgress && 
-                    !Main._actionBarManager.IsStateTransitionInProgress)
+                if (Main.IsEnabled && Main._actionBarManager != null && Main._actionBarManager.IsQuickCastModeActive)
                 {
-                    // 检查槽位是否被设置为空
+                    bool isInternalUpdate = Main._actionBarManager.IsInternalBarUpdateInProgress;
+                    bool isStateTransition = Main._actionBarManager.IsStateTransitionInProgress;
+                    bool isGameRefreshing = QuickCastPatches.IsGameInternallyRefreshingActionBar;
+                    bool isImmunityActive = Main._actionBarManager.IgnoreExternalSlotClearingUntilFrame >= Time.frameCount; // True if immunity is active
+
+                    // Condition for actual unbinding:
+                    // NOT an internal update by our mod, NOT a state transition,
+                    // NOT a game bulk refresh, AND immunity period has EXPIRED.
+                    bool canUnbind = !isInternalUpdate && !isStateTransition && !isGameRefreshing && !isImmunityActive;
+
                     bool isSlotEmptied = (abs == null || abs is MechanicActionBarSlotEmpty);
 
-                    if (isSlotEmptied)
+                    if (canUnbind && isSlotEmptied)
                     {
                         int slotIndex = __instance.Index; 
-                        // 确保这个索引是我们Mod管理的槽位索引之一 (0-11)
-                        // _mainBarManagedSlotIndices 是 private 的，但我们知道其范围是 0-11
                         if (slotIndex >= 0 && slotIndex < 12) 
                         {
-                            // 进一步确认这个 ActionBarSlotVM 实例确实是主行动栏上的那一个
-                            // 而不是法术书或其他地方的。可以通过检查其父级 ActionBarVM 是否为游戏当前的 ActionBarVM
                             var gameActionBarVM = Game.Instance?.RootUiContext?.InGameVM?.StaticPartVM?.ActionBarVM;
                             if (gameActionBarVM != null && gameActionBarVM.Slots.Contains(__instance))
                             {
-                                Main.LogDebug($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} in QuickCast mode was emptied (new type: {abs?.GetType().Name ?? "null"}). Attempting to unbind.");
+                                Main.LogDebug($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} in QuickCast mode was emptied (new type: {abs?.GetType().Name ?? "null"}). Attempting to unbind (Immunity passed or not applicable).");
                                 Main._actionBarManager.UnbindSpellFromLogicalSlotIfActive(slotIndex);
                             }
-                            // else: Log("[Patch SetMechanicSlot Postfix] Slot {slotIndex} was emptied, but it doesn't seem to be part of the main action bar VM currently.");
                         }
-                        // else: Log($"[Patch SetMechanicSlot Postfix] Slot {slotIndex} was emptied, but it's outside the managed range (0-11).");
+                    }
+                    // Log "skipped due to immunity" only if:
+                    // 1. Slot was emptied.
+                    // 2. Immunity is active.
+                    // 3. It's NOT a game bulk refresh (to avoid spam during SetMechanicSlots).
+                    // 4. It's NOT an internal update by our mod.
+                    // 5. It's NOT during a state transition.
+                    else if (isSlotEmptied && isImmunityActive && !isGameRefreshing && !isInternalUpdate && !isStateTransition)
+                    {
+                        Main.LogDebug($"[Patch SetMechanicSlot Postfix] Skipped unbind for slot {__instance.Index} (emptied to {abs?.GetType().Name ?? "null"}) due to immunity period (and not a game bulk refresh). IgnoreUntilFrame: {Main._actionBarManager.IgnoreExternalSlotClearingUntilFrame}, CurrentFrame: {Time.frameCount}");
                     }
                 }
+            }
+        }
+        #endregion
+
+        #region ActionBarVM.SetMechanicSlots 补丁 (标记游戏内部批量刷新)
+        [HarmonyPatch(typeof(Kingmaker.UI.MVVM._VM.ActionBar.ActionBarVM), "SetMechanicSlots", new Type[] { typeof(UnitEntityData) })]
+        static class ActionBarVM_SetMechanicSlots_Patch
+        {
+            static void Prefix()
+            {
+                QuickCastPatches.IsGameInternallyRefreshingActionBar = true;
+                Main.LogDebug("[Patch ActionBarVM.SetMechanicSlots PREFIX] IsGameInternallyRefreshingActionBar SET TO TRUE");
+            }
+
+            static void Postfix()
+            {
+                QuickCastPatches.IsGameInternallyRefreshingActionBar = false;
+                Main.LogDebug("[Patch ActionBarVM.SetMechanicSlots POSTFIX] IsGameInternallyRefreshingActionBar SET TO FALSE");
             }
         }
         #endregion

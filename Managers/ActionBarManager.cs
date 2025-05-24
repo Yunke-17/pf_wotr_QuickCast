@@ -61,6 +61,13 @@ namespace QuickCast
         private string _originalSpellGroupName = null;
         #endregion
 
+        #region 新增：用于控制从FullScreenUI返回后的解绑豁免期
+        public int IgnoreExternalSlotClearingUntilFrame = -1;
+        // 新增：用于计划在从FullScreenUI退出后执行刷新
+        private bool _needsRefreshAfterFullScreenExit = false;
+        private int _refreshAfterFullScreenExitFrameTarget = -1;
+        #endregion
+
         #region 构造函数与初始化
         public ActionBarManager(UnityModManager.ModEntry modEntry, Func<ActionBarPCView> getActionBarPCView, Func<ActionBarGroupPCView> getSpellsGroupView)
         {
@@ -818,28 +825,36 @@ namespace QuickCast
 
         public void OnGameModeStop(GameModeType gameMode)
         {
-            LogDebug($"[ABM OnGameModeStop] Exiting game mode: {gameMode}. Page to restore: {_pageToRestoreAfterDialog}, Deferred queued: {_deferredRestoreQueued}, Deferred page: {_pageToRestoreDeferred}");
+            LogDebug($"[ABM OnGameModeStop] Exiting game mode: {gameMode}. Page to restore: {_pageToRestoreAfterDialog}, Deferred queued: {_deferredRestoreQueued}, Deferred page: {_pageToRestoreDeferred}, NeedsRefresh: {_needsRefreshAfterFullScreenExit}, RefreshTarget: {_refreshAfterFullScreenExitFrameTarget}");
+            // bool wasRestoringFromFullScreenUI = false; // V2 change, removed for V3 logic
 
             // When exiting modes where QuickCast was suspended.
             if (gameMode == GameModeType.Dialog || 
-                gameMode == GameModeType.FullScreenUi ||
+                gameMode == GameModeType.FullScreenUi || 
                 gameMode == GameModeType.Cutscene ||
                 gameMode == GameModeType.CutsceneGlobalMap)
             {
-                _isStateTransitionInProgress = false; // Exiting the special UI state
+                _isStateTransitionInProgress = false; 
+                LogDebug($"[ABM OnGameModeStop] Mode {gameMode}: _isStateTransitionInProgress set to false.");
 
                 if (_pageToRestoreAfterDialog != -1)
                 {
-                    // Instead of deferring, try to restore immediately.
-                    // The Update loop's _isStateTransitionInProgress check will no longer block activation.
                     LogDebug($"[ABM OnGameModeStop] Mode {gameMode}: Attempting to restore QuickCast to page {_pageToRestoreAfterDialog}.");
-                    TryActivateQuickCastMode(_pageToRestoreAfterDialog, false); 
+                    bool success = TryActivateQuickCastMode(_pageToRestoreAfterDialog, false); 
+                    
+                    if (success && gameMode == GameModeType.FullScreenUi) // Specifically after restoring from FullScreenUI
+                    {
+                        this.IgnoreExternalSlotClearingUntilFrame = Time.frameCount + 3; // Grant 3 frames of immunity (current, F+1, F+2)
+                        _needsRefreshAfterFullScreenExit = true;
+                        _refreshAfterFullScreenExitFrameTarget = Time.frameCount + 2; // Schedule refresh for F+2
+                        LogDebug($"[ABM OnGameModeStop] QC restored from FullScreenUI. Set IgnoreExternalSlotClearingUntilFrame to {this.IgnoreExternalSlotClearingUntilFrame}. Scheduled refresh at frame {_refreshAfterFullScreenExitFrameTarget} (Current frame: {Time.frameCount})");
+                    }
                 }
                 else
                 {
                     LogDebug($"[ABM OnGameModeStop] Mode {gameMode}: No QuickCast page to restore.");
                 }
-                _pageToRestoreAfterDialog = -1; // Clear the restore request
+                _pageToRestoreAfterDialog = -1; 
             }
         }
 
@@ -916,6 +931,17 @@ namespace QuickCast
                 _deferredRestoreQueued = false;
                 _pageToRestoreDeferred = -1;
                 dialogRestoreRanThisFrame = true;
+            }
+
+            // 新增：处理计划的刷新逻辑
+            if (_needsRefreshAfterFullScreenExit && Time.frameCount >= _refreshAfterFullScreenExitFrameTarget)
+            {
+                if (_isQuickCastModeActive)
+                {
+                    LogDebug($"[ABM Update] Executing scheduled refresh after FullScreenUI exit for page {_activeQuickCastPage}. TargetFrame: {_refreshAfterFullScreenExitFrameTarget}, CurrentFrame: {Time.frameCount}");
+                    RefreshMainActionBarForCurrentQuickCastPage();
+                }
+                _needsRefreshAfterFullScreenExit = false; // 重置标志
             }
 
             if (dialogRestoreRanThisFrame) 
